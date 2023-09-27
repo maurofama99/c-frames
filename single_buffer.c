@@ -8,7 +8,7 @@
  * DELTA = 1 -> A new frame starts whenever the value of a particular attribute changes by more than an amount.
  * AGGREGATE = 2 -> End a frame when an aggregate of the values of a specified attribute within the frame exceeds a threshold.
  **/
-#define FRAME 2
+#define FRAME 1
 
 /* PARAMETERS */
 // THRESHOLD
@@ -23,7 +23,7 @@
  * AVG = 0
  * SUM = 1
  **/
-#define AGGREGATE 0 // Specify aggregation function
+#define AGGREGATE 1 // Specify aggregation function
 #define AGGREGATE_THRESHOLD 30 // Local condition
 
 #define MAX_TUPLES 100
@@ -74,26 +74,30 @@ node *update(tuple tuple, context *C, node *buffer);
 node *open(tuple tuple, context *C, node *buffer);
 /********************/
 
-// put a tuple in the buffer
-// FIXME: directly add in the queue rear
-node* enqueue(node** head, tuple data) {
+// crate a node for the buffer
+node* newnode(tuple data){
 
     node* new_node = (node*)malloc(sizeof(node));
     new_node->data = data;
     new_node->next = NULL;
 
-    if (*head == NULL) {
-        *head = new_node;
-        return *head;
+    return new_node;
+}
+
+// put a tuple in the buffer
+node* enqueue(node** last, tuple data) {
+
+    node* new_node = newnode(data);
+
+    if (*last == NULL) {
+        perror("NULL pointer on last element, impossible to enqueue");
+        return NULL;
     }
 
-    node* last = *head;
-    while (last->next != NULL) {
-        last = last->next;
-    }
+    node* last_node = *last;
+    last_node->next = new_node;
 
-    last->next = new_node;
-    return *head;
+    return new_node;
 }
 
 void print_buffer(node* head) {
@@ -142,8 +146,11 @@ int main() {
     }
     printf("---------------------------\n\n");
 
-    // initialize buffer and context
+    // initialize buffer
     node* buffer = NULL;
+    node* tail = NULL;
+
+    // initialize context
     context* C = (context*)malloc(sizeof(context));
     C->frame_type = FRAME;
     C->count = 0;
@@ -153,8 +160,11 @@ int main() {
     for (i = 0; i < num_tuples; i++) {
         // process tuple
         if (close_pred(tuples[i], C)) buffer = close(tuples[i], C, buffer);
-        if (update_pred(tuples[i], C)) buffer = update(tuples[i], C, buffer);
-        if (open_pred(tuples[i], C)) buffer = open(tuples[i], C, buffer);
+        if (update_pred(tuples[i], C)) tail = update(tuples[i], C, tail);
+        if (open_pred(tuples[i], C)) {
+            buffer = open(tuples[i], C, buffer);
+            tail = buffer;
+        }
     }
     if (buffer != NULL){ // evict last frame
         if ((C->frame_type != 0) || (C->count > MIN_COUNT)){
@@ -172,15 +182,15 @@ node *open(tuple tuple, context *C, node *buffer) {
     switch (C->frame_type) {
         case 0:
             C->count++;
-            return enqueue(&buffer, tuple);
+            return newnode(tuple);
         case 1:
             C->start = true;
             C->v = tuple.A;
-            return enqueue(&buffer, tuple);
+            return newnode(tuple);
         case 2:
             C->v = tuple.A; // aggregation function on a single value corresponds to that value
             C->start = true;
-            return enqueue(&buffer, tuple);
+            return newnode(tuple);
     }
 }
 
@@ -208,18 +218,15 @@ node *close(tuple tuple, context *C, node* buffer) {
             }
             free(buffer);
             C->count = 0;
-            buffer = NULL;
             return NULL;
         case 1:
             evict(buffer);
             free(buffer);
-            buffer = NULL;
             C->start = false;
             return NULL;
         case 2:
             evict(buffer);
             free(buffer);
-            buffer = NULL;
             C->start = false;
             return NULL;
     }
