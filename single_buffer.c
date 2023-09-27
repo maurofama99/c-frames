@@ -2,21 +2,22 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <math.h>
+#include <string.h>
 
 /**
  * THRESHOLD = 0 -> Detect time periods where a specified attribute is over under a specified threshold.
  * DELTA = 1 -> A new frame starts whenever the value of a particular attribute changes by more than an amount.
  * AGGREGATE = 2 -> End a frame when an aggregate of the values of a specified attribute within the frame exceeds a threshold.
  **/
-#define FRAME 1
+#define FRAME 0
 
 /* PARAMETERS */
 // THRESHOLD
-#define THRESHOLD 27 // Local condition
+#define THRESHOLD 1000 // Local condition
 #define MIN_COUNT 1 // Global condition
 
 // DELTA
-#define DELTA 4 // Local condition
+#define DELTA 1000 // Local condition
 
 // AGGREGATE
 /**
@@ -24,14 +25,15 @@
  * SUM = 1
  **/
 #define AGGREGATE 1 // Specify aggregation function
-#define AGGREGATE_THRESHOLD 30 // Local condition
+#define AGGREGATE_THRESHOLD 1000 // Local condition
 
-#define MAX_TUPLES 100
+#define MAX_TUPLES 25000
 
 // tuple definition
 typedef struct Data {
-    int VID;
-    int A;
+    long timestamp;
+    long key;
+    double A; // value
 } tuple;
 
 // buffer element definition
@@ -70,7 +72,7 @@ bool open_pred(tuple data, context *pContext);
 // FUNCTIONS
 // Concrete implementation of the framing action
 node *close(tuple tuple, context *C, node* buffer);
-node *update(tuple tuple, context *C, node *buffer);
+node *update(tuple tuple, context *C, node *buffer, node *list);
 node *open(tuple tuple, context *C, node *buffer);
 /********************/
 
@@ -102,7 +104,7 @@ node* enqueue(node** last, tuple data) {
 
 void print_buffer(node* head) {
     while (head != NULL) {
-        printf("[VID: %d, A: %d] ", head->data.VID, head->data.A);
+        printf("[VID: %ld, A: %f] ", head->data.timestamp, head->data.A);
         head = head->next;
     }
     printf("\n");
@@ -120,7 +122,7 @@ int main() {
 
     // parse CSV
     // FIXME: can't use relative path
-    FILE *file = fopen("/home/maurofama/Documents/PolyFlow/OVERT/frink_project/frink/src/main/resources/small.csv", "r");
+    FILE *file = fopen("/home/maurofama/Documents/PolyFlow/OVERT/c-frames/resources/sample-threshold-1000;5.csv", "r");
     if (file == NULL) {
         perror("Error loading input file");
         return 1;
@@ -129,21 +131,43 @@ int main() {
     // store input CSV in array
     i = 0;
     char line[256];
-    while (fgets(line, sizeof(line), file)) {
-        int vid, speed;
-        if (sscanf(line, "[%d, %d", &vid, &speed) == 2) {
-            tuples[i].VID = vid;
-            tuples[i].A = speed;
-            i++;
-        }
+
+    // ignore header
+    if (fgets(line, 256, file) == NULL) {
+        perror("Error reading CSV header");
+        fclose(file);
+        return 1;
     }
+
+    // FIXME: CSV generator creates some more tuples than expected, ok because guarantees windowing correctness?
+    // FIXME: DELTA frames generator are wrongly sized: after first frame, it generates 1 tuple more than expected in the frame
+    while (fgets(line, 256, file) != NULL) {
+        char *token = strtok(line, ",");
+        int count = 0;
+
+        while (token != NULL) {
+            if (count == 0) {
+                tuples[i].timestamp = strtol(token, NULL, 10);
+            } else if (count == 1) {
+                tuples[i].key = strtol(token, NULL, 10);
+            } else if (count == 2) {
+                tuples[i].A = strtod(token, NULL);
+            }
+            token = strtok(NULL, ",");
+            count++;
+        }
+        i++;
+    }
+
     num_tuples = i;
     fclose(file);
 
     printf("DATA\n---------------------------\n");
     for (int j = 0; j < i; j++) {
-        printf("VID: %d, A: %d\n", tuples[j].VID, tuples[j].A);
+        printf("timestamp: %ld, A: %f\n", tuples[j].timestamp, tuples[j].A);
     }
+    printf("---------------------------\n");
+    printf("%d tuples read\n", num_tuples);
     printf("---------------------------\n\n");
 
     // initialize buffer
@@ -160,7 +184,7 @@ int main() {
     for (i = 0; i < num_tuples; i++) {
         // process tuple
         if (close_pred(tuples[i], C)) buffer = close(tuples[i], C, buffer);
-        if (update_pred(tuples[i], C)) tail = update(tuples[i], C, tail);
+        if (update_pred(tuples[i], C)) tail = update(tuples[i], C, tail, buffer);
         if (open_pred(tuples[i], C)) {
             buffer = open(tuples[i], C, buffer);
             tail = buffer;
@@ -195,7 +219,8 @@ node *open(tuple tuple, context *C, node *buffer) {
 }
 
 // Update the current frame, extends it to include the current processed tuple.
-node *update(tuple tuple, context *C, node *buffer) {
+node *update(tuple tuple, context *C, node *buffer, node *list) {
+    node* return_value;
     switch (C->frame_type) {
         case 0:
             C->count++;
@@ -203,8 +228,9 @@ node *update(tuple tuple, context *C, node *buffer) {
         case 1:
             return enqueue(&buffer, tuple);
         case 2:
-            C->v = aggregation(AGGREGATE, buffer);
-            return enqueue(&buffer, tuple);
+            return_value = enqueue(&buffer, tuple);
+            C->v = aggregation(AGGREGATE, list);
+            return return_value;
     }
 }
 
@@ -234,7 +260,7 @@ node *close(tuple tuple, context *C, node* buffer) {
 
 bool open_pred(tuple tuple, context *C) {
     switch (C->frame_type) {
-        case 0: return (tuple.A < THRESHOLD && C->count == 0);
+        case 0: return (tuple.A >= THRESHOLD && C->count == 0);
         case 1: return (!(C->start));
         case 2: return (!(C->start));
     }
@@ -242,7 +268,7 @@ bool open_pred(tuple tuple, context *C) {
 
 bool update_pred(tuple tuple, context *C) {
     switch (C->frame_type) {
-        case 0: return (tuple.A < THRESHOLD && C->count > 0);
+        case 0: return (tuple.A >= THRESHOLD && C->count > 0);
         case 1: return (fabs(C->v - tuple.A) < DELTA && C->start);
         case 2: return (C->v < AGGREGATE_THRESHOLD && C->start);
     }
@@ -250,7 +276,7 @@ bool update_pred(tuple tuple, context *C) {
 
 bool close_pred(tuple tuple, context *C) {
     switch (C->frame_type) {
-        case 0: return (tuple.A >= THRESHOLD && C->count > 0);
+        case 0: return (tuple.A < THRESHOLD && C->count > 0);
         case 1: return (fabs(C->v - tuple.A) >= DELTA && C->start);
         case 2: return (C->v >= AGGREGATE_THRESHOLD && C->start);
     }
@@ -262,7 +288,7 @@ double avg(node* buffer) {
         return -1;
     }
 
-    int sum = 0;
+    double sum = 0;
     int count = 0;
     node* current = buffer;
 
