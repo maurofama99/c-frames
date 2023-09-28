@@ -85,8 +85,7 @@ node* enqueue(node** last, tuple data) {
     node* new_node = newnode(data);
 
     if (*last == NULL) {
-        perror("NULL pointer on last element, impossible to enqueue");
-        return NULL;
+        return new_node;
     }
 
     node* last_node = *last;
@@ -125,7 +124,8 @@ int main(int argc, char *argv[]) {
     char line[MAX_CHARS];
 
     // initialize buffer
-    node* buffer = NULL;
+    node* current = NULL;
+    node* head = NULL;
     node* tail = NULL;
 
     // initialize context
@@ -169,22 +169,24 @@ int main(int argc, char *argv[]) {
         }
 
         // process tuple
-        if (close_pred(data, C)) buffer = close(data, C, buffer);
-        if (update_pred(data, C)) tail = update(data, C, tail, buffer);
+        if (close_pred(data, C)) close(data, C, current);
+        if (update_pred(data, C)) tail = update(data, C, tail, current);
         if (open_pred(data, C)) {
-            buffer = open(data, C, buffer);
-            tail = buffer;
+            current = open(data, C, tail);
+            tail = current;
         }
+        if (num_tuples == 0) head = current; // save the head of the buffer
         num_tuples++;
     }
     // evict last frame if possible
-    if (buffer != NULL){
+    if (current != NULL){
         if ((C->frame_type != 0) || (C->count > MIN_COUNT)){
-            evict(buffer);
-            free(buffer);
-            buffer = NULL;
+            evict(current);
         }
     }
+
+    printf("--------------------\nBuffer: ");
+    print_buffer(head);
 
     fclose(file);
 
@@ -196,15 +198,15 @@ node *open(tuple tuple, context *C, node *buffer) {
     switch (C->frame_type) {
         case 0:
             C->count++;
-            return newnode(tuple);
+            return enqueue(&buffer, tuple);
         case 1:
             C->start = true;
             C->v = tuple.A;
-            return newnode(tuple);
+            return enqueue(&buffer, tuple);
         case 2:
             C->v = tuple.A; // aggregation function on a single value corresponds to that value
             C->start = true;
-            return newnode(tuple);
+            return enqueue(&buffer, tuple);
     }
 }
 
@@ -232,17 +234,14 @@ node *close(tuple tuple, context *C, node* buffer) {
             if (C->count > MIN_COUNT) {
                 evict(buffer);
             }
-            free(buffer);
             C->count = 0;
             return NULL;
         case 1:
             evict(buffer);
-            free(buffer);
             C->start = false;
             return NULL;
         case 2:
             evict(buffer);
-            free(buffer);
             C->start = false;
             return NULL;
     }
