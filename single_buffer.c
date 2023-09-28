@@ -4,13 +4,6 @@
 #include <math.h>
 #include <string.h>
 
-/**
- * THRESHOLD = 0 -> Detect time periods where a specified attribute is over under a specified threshold.
- * DELTA = 1 -> A new frame starts whenever the value of a particular attribute changes by more than an amount.
- * AGGREGATE = 2 -> End a frame when an aggregate of the values of a specified attribute within the frame exceeds a threshold.
- **/
-#define FRAME 0
-
 /* PARAMETERS */
 // THRESHOLD
 #define THRESHOLD 1000 // Local condition
@@ -27,7 +20,7 @@
 #define AGGREGATE 1 // Specify aggregation function
 #define AGGREGATE_THRESHOLD 1000 // Local condition
 
-#define MAX_TUPLES 25000
+#define MAX_CHARS 256
 
 // tuple definition
 typedef struct Data {
@@ -114,61 +107,22 @@ void evict(node* buffer){
     print_buffer(buffer);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
 
-    // FIXME: process tuples on the fly
-    tuple tuples[MAX_TUPLES];
-    int i, num_tuples;
-
-    // parse CSV
-    // FIXME: can't use relative path
-    FILE *file = fopen("/home/maurofama/Documents/PolyFlow/OVERT/c-frames/resources/sample-threshold-1000;5.csv", "r");
-    if (file == NULL) {
-        perror("Error loading input file");
+    if (argc != 3) {
+        printf("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)>\n ", argv[0]);
         return 1;
     }
+    char *file_path = argv[1];
+    /**
+    * THRESHOLD = 0 -> Detect time periods where a specified attribute is over under a specified threshold.
+    * DELTA = 1 -> A new frame starts whenever the value of a particular attribute changes by more than an amount.
+    * AGGREGATE = 2 -> End a frame when an aggregate of the values of a specified attribute within the frame exceeds a threshold.
+     **/
+    int FRAME = atoi(argv[2]);
 
-    // store input CSV in array
-    i = 0;
-    char line[256];
-
-    // ignore header
-    if (fgets(line, 256, file) == NULL) {
-        perror("Error reading CSV header");
-        fclose(file);
-        return 1;
-    }
-
-    // FIXME: CSV generator creates some more tuples than expected, ok because guarantees windowing correctness?
-    // FIXME: DELTA frames generator are wrongly sized: after first frame, it generates 1 tuple more than expected in the frame
-    while (fgets(line, 256, file) != NULL) {
-        char *token = strtok(line, ",");
-        int count = 0;
-
-        while (token != NULL) {
-            if (count == 0) {
-                tuples[i].timestamp = strtol(token, NULL, 10);
-            } else if (count == 1) {
-                tuples[i].key = strtol(token, NULL, 10);
-            } else if (count == 2) {
-                tuples[i].A = strtod(token, NULL);
-            }
-            token = strtok(NULL, ",");
-            count++;
-        }
-        i++;
-    }
-
-    num_tuples = i;
-    fclose(file);
-
-    printf("DATA\n---------------------------\n");
-    for (int j = 0; j < i; j++) {
-        printf("timestamp: %ld, A: %f\n", tuples[j].timestamp, tuples[j].A);
-    }
-    printf("---------------------------\n");
-    printf("%d tuples read\n", num_tuples);
-    printf("---------------------------\n\n");
+    int num_tuples = 0;
+    char line[MAX_CHARS];
 
     // initialize buffer
     node* buffer = NULL;
@@ -181,22 +135,58 @@ int main() {
     C->start = false;
     C->v = -1;
 
-    for (i = 0; i < num_tuples; i++) {
+    // parse CSV
+    FILE *file = fopen(file_path, "r");
+    if (file == NULL) {
+        perror("Error loading input file");
+        return 1;
+    }
+
+    // ignore header
+    if (fgets(line, 256, file) == NULL) {
+        perror("Error reading CSV header");
+        fclose(file);
+        return 1;
+    }
+
+    // FIXME: CSV generator creates some more tuples than expected, ok because guarantees windowing correctness? DELTA frames generator are wrongly sized: after first frame, it generates 1 tuple more than expected in the frame
+    while (fgets(line, 256, file) != NULL) {
+        char *token = strtok(line, ",");
+        int count = 0;
+
+        // read tuple from file and store attributes
+        tuple data;
+        while (token != NULL) {
+            if (count == 0) {
+                data.timestamp = strtol(token, NULL, 10);
+            } else if (count == 1) {
+                data.key = strtol(token, NULL, 10);
+            } else if (count == 2) {
+                data.A = strtod(token, NULL);
+            }
+            token = strtok(NULL, ",");
+            count++;
+        }
+
         // process tuple
-        if (close_pred(tuples[i], C)) buffer = close(tuples[i], C, buffer);
-        if (update_pred(tuples[i], C)) tail = update(tuples[i], C, tail, buffer);
-        if (open_pred(tuples[i], C)) {
-            buffer = open(tuples[i], C, buffer);
+        if (close_pred(data, C)) buffer = close(data, C, buffer);
+        if (update_pred(data, C)) tail = update(data, C, tail, buffer);
+        if (open_pred(data, C)) {
+            buffer = open(data, C, buffer);
             tail = buffer;
         }
+        num_tuples++;
     }
-    if (buffer != NULL){ // evict last frame
+    // evict last frame if possible
+    if (buffer != NULL){
         if ((C->frame_type != 0) || (C->count > MIN_COUNT)){
             evict(buffer);
             free(buffer);
             buffer = NULL;
         }
     }
+
+    fclose(file);
 
     return 0;
 }
