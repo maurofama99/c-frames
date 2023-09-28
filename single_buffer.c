@@ -187,6 +187,7 @@ int main(int argc, char *argv[]) {
 
     printf("--------------------\nBuffer: ");
     print_buffer(head);
+    free(head);
 
     fclose(file);
 
