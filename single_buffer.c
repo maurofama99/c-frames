@@ -64,34 +64,26 @@ bool update_pred(tuple data, context *pContext);
 bool open_pred(tuple data, context *pContext);
 // FUNCTIONS
 // Concrete implementation of the framing action
-node *close(tuple tuple, context *C, node* buffer);
-node *update(tuple tuple, context *C, node *buffer, node *list);
-node *open(tuple tuple, context *C, node *buffer);
+void close(tuple tuple, context *C, node* buffer);
+void update(tuple tuple, context *C, node **buffer, node *list) ;
+void open(tuple tuple, context *C, node **buffer);
 /********************/
 
-// crate a node for the buffer
-node* newnode(tuple data){
+// put a tuple in the buffer
+void enqueue(node** last, tuple data) {
 
     node* new_node = (node*)malloc(sizeof(node));
     new_node->data = data;
     new_node->next = NULL;
 
-    return new_node;
-}
-
-// put a tuple in the buffer
-node* enqueue(node** last, tuple data) {
-
-    node* new_node = newnode(data);
-
     if (*last == NULL) {
-        return new_node;
+        *last = new_node;
+        return;
     }
 
     node* last_node = *last;
     last_node->next = new_node;
-
-    return new_node;
+    *last = new_node;
 }
 
 void print_buffer(node* head) {
@@ -109,7 +101,7 @@ void evict(node* buffer){
 int main(int argc, char *argv[]) {
 
     if (argc != 3) {
-        printf("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)>\n ", argv[0]);
+        printf("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)>\n ");
         return 1;
     }
     char *file_path = argv[1];
@@ -170,10 +162,10 @@ int main(int argc, char *argv[]) {
 
         // process tuple
         if (close_pred(data, C)) close(data, C, current);
-        if (update_pred(data, C)) tail = update(data, C, tail, current);
+        if (update_pred(data, C)) update(data, C, &tail, current);
         if (open_pred(data, C)) {
-            current = open(data, C, tail);
-            tail = current;
+            open(data, C, &tail);
+            current = tail;
         }
         if (num_tuples == 0) head = current; // save the head of the buffer
         num_tuples++;
@@ -195,56 +187,60 @@ int main(int argc, char *argv[]) {
 }
 
 // Open a new frame and insert the current processed tuple.
-node *open(tuple tuple, context *C, node *buffer) {
+void open(tuple tuple, context *C, node **buffer) {
     switch (C->frame_type) {
         case 0:
             C->count++;
-            return enqueue(&buffer, tuple);
+            enqueue(buffer, tuple);
+            break;
         case 1:
             C->start = true;
             C->v = tuple.A;
-            return enqueue(&buffer, tuple);
+            enqueue(buffer, tuple);
+            break;
         case 2:
             C->v = tuple.A; // aggregation function on a single value corresponds to that value
             C->start = true;
-            return enqueue(&buffer, tuple);
+            enqueue(buffer, tuple);
+            break;
     }
 }
 
 // Update the current frame, extends it to include the current processed tuple.
-node *update(tuple tuple, context *C, node *buffer, node *list) {
-    node* return_value;
+void update(tuple tuple, context *C, node **buffer, node *list) {
     switch (C->frame_type) {
         case 0:
             C->count++;
-            return enqueue(&buffer, tuple);
+            enqueue(buffer, tuple);
+            break;
         case 1:
-            return enqueue(&buffer, tuple);
+            enqueue(buffer, tuple);
+            break;
         case 2:
-            return_value = enqueue(&buffer, tuple);
+            enqueue(buffer, tuple);
             C->v = aggregation(AGGREGATE, list);
-            return return_value;
+            break;
     }
 }
 
 // Close the current frame and check for global conditions to eventually evict.
 // Removes the evicted/discarded frame from the buffer.
-node *close(tuple tuple, context *C, node* buffer) {
+void close(tuple tuple, context *C, node* buffer) {
     switch (C->frame_type) {
         case 0:
             if (C->count > MIN_COUNT) {
                 evict(buffer);
             }
             C->count = 0;
-            return NULL;
+            break;
         case 1:
             evict(buffer);
             C->start = false;
-            return NULL;
+            break;
         case 2:
             evict(buffer);
             C->start = false;
-            return NULL;
+            break;
     }
 }
 
