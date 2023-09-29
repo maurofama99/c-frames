@@ -50,7 +50,6 @@ typedef struct Context {
  * @return the result of the aggregation
  */
 double aggregation(int agg_function, node* buffer);
-
 /**** AGGREGATION FUNCTIONS ****/
 double avg(node* buffer);
 double sum(node* buffer);
@@ -69,9 +68,22 @@ void update(tuple tuple, context *C, node **buffer, node *list) ;
 void open(tuple tuple, context *C, node **buffer);
 /********************/
 
+/** BUFFER FUNCTIONS **/
+void enqueue(node** last, tuple data);
+void free_buffer(node *head);
+void print_buffer(node* head);
+/**********************/
+
+/**
+ * Perform window eviction when frame is closed
+ * @param buffer pointer to the head of list representing the current frame to be evicted
+ */
+void evict(node* buffer){
+    print_buffer(buffer);
+}
+
 // put a tuple in the buffer
 void enqueue(node** last, tuple data) {
-
     node* new_node = (node*)malloc(sizeof(node));
     new_node->data = data;
     new_node->next = NULL;
@@ -94,8 +106,13 @@ void print_buffer(node* head) {
     printf("\n");
 }
 
-void evict(node* buffer){
-    print_buffer(buffer);
+void free_buffer(node* head) {
+    node* current = head;
+    while (current != NULL) {
+        node* next = current->next;
+        free(current);
+        current = next;
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -179,9 +196,11 @@ int main(int argc, char *argv[]) {
 
     printf("--------------------\nBuffer: ");
     print_buffer(head);
-    free(head);
 
+    // free up memory and close input stream
     fclose(file);
+    free_buffer(head);
+    free(C);
 
     return 0;
 }
@@ -268,6 +287,16 @@ bool close_pred(tuple tuple, context *C) {
     }
 }
 
+double aggregation(int agg_function, node* buffer){
+    switch (agg_function) {
+        case 0: return avg(buffer);
+        case 1: return sum(buffer);
+        default:
+            perror("Error while selecting aggregation function");
+            return -1;
+    }
+}
+
 double avg(node* buffer) {
     if (buffer == NULL) {
         perror("Empty buffer, impossible to compute aggregate function\n");
@@ -302,14 +331,4 @@ double sum(node* buffer) {
     }
 
     return sum;
-}
-
-double aggregation(int agg_function, node* buffer){
-    switch (agg_function) {
-        case 0: return avg(buffer);
-        case 1: return sum(buffer);
-        default:
-            perror("Error while selecting aggregation function");
-            return -1;
-    }
 }
