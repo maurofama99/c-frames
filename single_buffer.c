@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
 /* PARAMETERS */
 // THRESHOLD
@@ -227,6 +228,18 @@ int main(int argc, char *argv[]) {
     window curr_window;
     tuple* content;
 
+    // declare benchmarking variables
+    clock_t begin_add;
+    clock_t begin_scope;
+    clock_t begin_content;
+    clock_t end_add;
+    clock_t end_scope;
+    clock_t end_content;
+    double time_spent_add;
+    double time_spent_scope;
+    double time_spent_content;
+    printf("action,time,n\n");
+
     // parse CSV
     FILE *file = fopen(file_path, "r");
     if (file == NULL) {
@@ -261,15 +274,21 @@ int main(int argc, char *argv[]) {
         }
 
         /** Start Add **/
+        begin_add = clock();
         enqueue(&tail_buffer, data);
+        end_add = clock();
+        time_spent_add = (double)(end_add - begin_add) / CLOCKS_PER_SEC;
         /** End Add **/
 
         if (num_tuples == 0) head_buffer = tail_buffer; // save pointer to first element of the list representing the buffer
         num_tuples++; // count the processed tuples
 
+        printf("add,%f,%d\n", time_spent_add,num_tuples);
+
         if (tick(data)) {
 
             /** Start Scope **/
+            begin_scope = clock();
             // Frame Operator
             buffer_iter = head_buffer; // initialize pointer that iterates over the buffer
             head = true;
@@ -299,6 +318,9 @@ int main(int argc, char *argv[]) {
                 curr_window.t_end = curr_tuple.timestamp;
                 buffer_iter = buffer_iter->next;
             }
+            end_scope = clock();
+            time_spent_scope = (double)(end_scope - begin_scope) / CLOCKS_PER_SEC;
+            printf("scope,%f,%d\n", time_spent_scope,num_tuples);
             /** End Scope **/ // result is curr_window
 
             // clean context
@@ -311,8 +333,12 @@ int main(int argc, char *argv[]) {
             tail = NULL;
 
             /** Start Content **/
+            begin_content = clock();
             buffer_iter = head_buffer; // initialize pointer that iterates over the buffer
             content = extract_data(curr_window, buffer_iter);
+            end_content = clock();
+            time_spent_content = (double)(end_content - begin_content) / CLOCKS_PER_SEC;
+            printf("content,%f,%d\n", time_spent_content,num_tuples);
             /** End Content **/
 
             /** Start Report **/
@@ -320,7 +346,7 @@ int main(int argc, char *argv[]) {
             /** End Report **/
 
                 /** Start Evict **/
-                evict(curr_window, content);
+                //evict(curr_window, content);
                 /** End Evict **/
 
             }
@@ -329,9 +355,6 @@ int main(int argc, char *argv[]) {
 
     }
     fclose(file); // close input file stream
-
-    printf("--------------------\nBuffer: ");
-    print_buffer(head_buffer);
 
     // free up memory
     free_buffer(head_buffer);
