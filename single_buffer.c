@@ -20,7 +20,7 @@
 #define AGGREGATE 1 // Specify aggregation function
 #define AGGREGATE_THRESHOLD 1000 // Local condition
 
-#define MAX_CHARS 256
+#define MAX_CHARS 256 // Max admitted characters in a line representing event
 
 // tuple definition
 typedef struct Data {
@@ -43,6 +43,13 @@ typedef struct Context {
     bool start;
 } context;
 
+// window definition
+typedef struct Window {
+    long size;
+    long t_start;
+    long t_end;
+} window;
+
 /**
  * This function decides which aggregation function has to be applied to the current frame
  * @param agg_function aggregation to apply
@@ -63,10 +70,10 @@ bool update_pred(tuple data, context *pContext);
 bool open_pred(tuple data, context *pContext);
 // FUNCTIONS
 // Concrete implementation of the framing action
-void close(tuple tuple, context *C, node* buffer);
-void update(tuple tuple, context *C, node **buffer, node *list) ;
-void open(tuple tuple, context *C, node **buffer);
-/********************/
+context *close(tuple tuple, context *C, node* buffer);
+context *update(tuple tuple, context *C, node **buffer, node *list) ;
+context *open(tuple tuple, context *C, node **buffer);
+/**********************/
 
 /** BUFFER FUNCTIONS **/
 void enqueue(node** last, tuple data);
@@ -74,15 +81,75 @@ void free_buffer(node *head);
 void print_buffer(node* head);
 /**********************/
 
+/** SECRET FUNCTIONS **/
+bool tick(tuple data);
+tuple *extract_data(window window, node *head);
+/**********************/
+
 /**
  * Perform window eviction when frame is closed
  * @param buffer pointer to the head of list representing the current frame to be evicted
  */
-void evict(node* buffer){
-    print_buffer(buffer);
+void evict(window window, tuple* content){
+    printf("FRAME [%ld, %ld] -> ", window.t_start, window.t_end);
+    for (int i = 0; i < window.size; i++){
+        printf("(ts: %ld, value: %f) ", content[i].timestamp, content[i].A);
+    }
+    printf("\n");
 }
 
-// put a tuple in the buffer
+bool tick(tuple data) {
+    if (data.timestamp >= 0) return true;
+    else return false;
+}
+
+/**
+ * Binary search in the buffer of every value with timestamp between window.start and window.end
+ * @param window struct containing timestamps and size of the window
+ * @param head pointer to head of the buffer
+ * @return the tuples contained in the window
+ */
+tuple *extract_data(window window, node *head) {
+    tuple *found = (tuple *) malloc(window.size * sizeof(tuple));
+
+    node *left = head;
+    node *right = NULL;
+
+    while (left != right) {
+        node *mid = left;
+        int count = 0;
+
+        while (mid != right) {
+            mid = mid->next;
+            count++;
+        }
+
+        mid = left;
+        for (int i = 0; i < count / 2; i++) {
+            mid = mid->next;
+        }
+
+        if (mid->data.timestamp == window.t_start) { // found
+            for (int j = 0; j < window.size; j++) {
+                found[j] = mid->data;
+                mid = mid->next;
+            }
+            return found;
+        } else if (mid->data.timestamp < window.t_start) {
+            left = mid->next;
+        } else {
+            right = mid;
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * Insert a tuple in the buffer
+ * @param last pointer to last element of the buffer
+ * @param data the tuple to be appended
+ */
 void enqueue(node** last, tuple data) {
     node* new_node = (node*)malloc(sizeof(node));
     new_node->data = data;
@@ -117,8 +184,8 @@ void free_buffer(node* head) {
 
 int main(int argc, char *argv[]) {
 
-    if (argc != 3) {
-        printf("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)>\n ");
+    if (argc != 4) {
+        perror("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)> <Report policy (ON CLOSE = 0 | ON UPDATE = 1)>\n ");
         return 1;
     }
     char *file_path = argv[1];
@@ -128,14 +195,23 @@ int main(int argc, char *argv[]) {
     * AGGREGATE = 2 -> End a frame when an aggregate of the values of a specified attribute within the frame exceeds a threshold.
      **/
     int FRAME = atoi(argv[2]);
+    /**
+    * ON CLOSE = 0 -> Report every time a frame is closed
+    * ON UPDATE = 1 -> Report every time a frame is updated
+     **/
+    int REPORT_POLICY = atoi(argv[3]);
 
     int num_tuples = 0;
     char line[MAX_CHARS];
 
     // initialize buffer
+    node* head_buffer = NULL;
+    node* tail_buffer = NULL;
+    node* buffer_iter = NULL;
+    node* buffer = NULL;
     node* current = NULL;
-    node* head = NULL;
     node* tail = NULL;
+    bool head;
 
     // initialize context
     context* C = (context*)malloc(sizeof(context));
@@ -143,6 +219,13 @@ int main(int argc, char *argv[]) {
     C->count = 0;
     C->start = false;
     C->v = -1;
+    tuple curr_tuple;
+    int size;
+    int last; // used to propagate last operation for report
+
+    // declare SECRET variables
+    window curr_window;
+    tuple* content;
 
     // parse CSV
     FILE *file = fopen(file_path, "r");
@@ -158,7 +241,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // FIXME: CSV generator creates some more tuples than expected, ok because guarantees windowing correctness? DELTA frames generator are wrongly sized: after first frame, it generates 1 tuple more than expected in the frame
+    // process stream
     while (fgets(line, 256, file) != NULL) {
         char *token = strtok(line, ",");
         int count = 0;
@@ -177,89 +260,136 @@ int main(int argc, char *argv[]) {
             count++;
         }
 
-        // process tuple
-        if (close_pred(data, C)) close(data, C, current);
-        if (update_pred(data, C)) update(data, C, &tail, current);
-        if (open_pred(data, C)) {
-            open(data, C, &tail);
-            current = tail;
+        /** Start Add **/
+        enqueue(&tail_buffer, data);
+        /** End Add **/
+
+        if (num_tuples == 0) head_buffer = tail_buffer; // save pointer to first element of the list representing the buffer
+        num_tuples++; // count the processed tuples
+
+        if (tick(data)) {
+
+            /** Start Scope **/
+            // Frame Operator
+            buffer_iter = head_buffer; // initialize pointer that iterates over the buffer
+            head = true;
+            while (buffer_iter != NULL) {
+                curr_tuple = buffer_iter->data;
+                // process tuple
+                if (close_pred(curr_tuple, C)) {
+                    C = close(curr_tuple, C, current);
+                    last = 0;
+                }
+                if (update_pred(curr_tuple, C)) {
+                    C = update(curr_tuple, C, &tail, current);
+                    curr_window.size++;
+                    last = 1;
+                }
+                if (open_pred(curr_tuple, C)) {
+                    C = open(curr_tuple, C, &tail);
+                    current = tail;
+                    curr_window.size = 1;
+                    if (head) { // save pointer to first element of the list representing the buffer
+                        buffer = tail;
+                        head = false;
+                    }
+                    last = 2;
+                    curr_window.t_start = curr_tuple.timestamp;
+                }
+                curr_window.t_end = curr_tuple.timestamp;
+                buffer_iter = buffer_iter->next;
+            }
+            /** End Scope **/ // result is curr_window
+
+            // clean context
+            free_buffer(buffer);
+            C->frame_type = FRAME;
+            C->count = 0;
+            C->start = false;
+            C->v = -1;
+            current = NULL;
+            tail = NULL;
+
+            /** Start Content **/
+            buffer_iter = head_buffer; // initialize pointer that iterates over the buffer
+            content = extract_data(curr_window, buffer_iter);
+            /** End Content **/
+
+            /** Start Report **/
+            if (REPORT_POLICY == last) { /// NOTE: to generalize the process it is possible to compare the current with the previous content
+            /** End Report **/
+
+                /** Start Evict **/
+                evict(curr_window, content);
+                /** End Evict **/
+
+            }
+            free(content);
         }
-        if (num_tuples == 0) head = current; // save the head of the buffer
-        num_tuples++;
+
     }
-    // evict last frame if possible
-    if (current != NULL){
-        if ((C->frame_type != 0) || (C->count > MIN_COUNT)){
-            evict(current);
-        }
-    }
+    fclose(file); // close input file stream
 
     printf("--------------------\nBuffer: ");
-    print_buffer(head);
+    print_buffer(head_buffer);
 
-    // free up memory and close input stream
-    fclose(file);
-    free_buffer(head);
+    // free up memory
+    free_buffer(head_buffer);
     free(C);
 
     return 0;
 }
 
 // Open a new frame and insert the current processed tuple.
-void open(tuple tuple, context *C, node **buffer) {
+context *open(tuple tuple, context *C, node **buffer) {
+    /** Add **/
+    enqueue(buffer, tuple);
+    /*********/
     switch (C->frame_type) {
         case 0:
             C->count++;
-            enqueue(buffer, tuple);
-            break;
+            return C;
         case 1:
             C->start = true;
             C->v = tuple.A;
-            enqueue(buffer, tuple);
-            break;
+            return C;
         case 2:
             C->v = tuple.A; // aggregation function on a single value corresponds to that value
             C->start = true;
-            enqueue(buffer, tuple);
-            break;
+            return C;
     }
 }
 
 // Update the current frame, extends it to include the current processed tuple.
-void update(tuple tuple, context *C, node **buffer, node *list) {
+context *update(tuple tuple, context *C, node **buffer, node *list) {
+    /** Add **/
+    enqueue(buffer, tuple);
+    /*********/
     switch (C->frame_type) {
         case 0:
             C->count++;
-            enqueue(buffer, tuple);
-            break;
+            return C;
         case 1:
-            enqueue(buffer, tuple);
-            break;
+            return C;
         case 2:
-            enqueue(buffer, tuple);
             C->v = aggregation(AGGREGATE, list);
-            break;
+            return C;
     }
 }
 
 // Close the current frame and check for global conditions to eventually evict.
 // Removes the evicted/discarded frame from the buffer.
-void close(tuple tuple, context *C, node* buffer) {
+context *close(tuple tuple, context *C, node* buffer) {
     switch (C->frame_type) {
         case 0:
-            if (C->count > MIN_COUNT) {
-                evict(buffer);
-            }
             C->count = 0;
-            break;
+            return C;
         case 1:
-            evict(buffer);
             C->start = false;
-            break;
+            return C;
         case 2:
-            evict(buffer);
             C->start = false;
-            break;
+            return C;
     }
 }
 
