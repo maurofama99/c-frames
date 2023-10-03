@@ -78,6 +78,7 @@ context *open(tuple tuple, context *C, node **buffer);
 
 /** BUFFER FUNCTIONS **/
 void enqueue(node** last, tuple data);
+void insertInOrder(node** head, tuple data);
 void free_buffer(node *head);
 void print_buffer(node* head);
 /**********************/
@@ -166,6 +167,24 @@ void enqueue(node** last, tuple data) {
     *last = new_node;
 }
 
+void insertInOrder(node** head, tuple data) {
+    node* new_node = (node*)malloc(sizeof(node));
+    new_node->data = data;
+    new_node->next = NULL;
+
+    if (*head == NULL || data.timestamp <= (*head)->data.timestamp) {
+        new_node->next = *head;
+        *head = new_node;
+    } else {
+        node* current = *head;
+        while (current->next != NULL && current->next->data.timestamp <= data.timestamp) {
+            current = current->next;
+        }
+        new_node->next = current->next;
+        current->next = new_node;
+    }
+}
+
 void print_buffer(node* head) {
     while (head != NULL) {
         printf("[VID: %ld, A: %f] ", head->data.timestamp, head->data.A);
@@ -185,8 +204,8 @@ void free_buffer(node* head) {
 
 int main(int argc, char *argv[]) {
 
-    if (argc != 4) {
-        perror("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)> <Report policy (ON CLOSE = 0 | ON UPDATE = 1)>\n ");
+    if (argc != 5) {
+        perror("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)> <Report policy (ON CLOSE = 0 | ON UPDATE = 1)> <Order policy (IN ORDER = 0 | OUT OF ORDER = 1)>\n ");
         return 1;
     }
     char *file_path = argv[1];
@@ -201,6 +220,11 @@ int main(int argc, char *argv[]) {
     * ON UPDATE = 1 -> Report every time a frame is updated
      **/
     int REPORT_POLICY = atoi(argv[3]);
+    /**
+    * IN ORDER = 0
+    * OUT OF ORDER = 1
+     **/
+    int ORDER_POLICY = atoi(argv[4]);
 
     int num_tuples = 0;
     char line[MAX_CHARS];
@@ -274,13 +298,21 @@ int main(int argc, char *argv[]) {
         }
 
         /** Start Add **/
-        begin_add = clock();
-        enqueue(&tail_buffer, data);
-        end_add = clock();
-        time_spent_add = (double)(end_add - begin_add) / CLOCKS_PER_SEC;
+        if (ORDER_POLICY == 0) {
+            begin_add = clock();
+            enqueue(&tail_buffer, data);
+            end_add = clock();
+            time_spent_add = (double) (end_add - begin_add) / CLOCKS_PER_SEC;
+            if (num_tuples == 0) head_buffer = tail_buffer; // save pointer to first element of the list representing the buffer
+        }
+        else if (ORDER_POLICY == 1) {
+            begin_add = clock();
+            insertInOrder(&head_buffer, data);
+            end_add = clock();
+            time_spent_add = (double) (end_add - begin_add) / CLOCKS_PER_SEC;
+        }
         /** End Add **/
 
-        if (num_tuples == 0) head_buffer = tail_buffer; // save pointer to first element of the list representing the buffer
         num_tuples++; // count the processed tuples
 
         printf("add,%f,%d\n", time_spent_add,num_tuples);
@@ -316,7 +348,8 @@ int main(int argc, char *argv[]) {
                     curr_window.t_start = curr_tuple.timestamp;
                 }
                 curr_window.t_end = curr_tuple.timestamp;
-                buffer_iter = buffer_iter->next;
+                if (buffer_iter->next != NULL && buffer_iter->next->data.timestamp <= data.timestamp) buffer_iter = buffer_iter->next; // create frames until the processed tuple is found
+                else buffer_iter = NULL;
             }
             end_scope = clock();
             time_spent_scope = (double)(end_scope - begin_scope) / CLOCKS_PER_SEC;
@@ -365,9 +398,7 @@ int main(int argc, char *argv[]) {
 
 // Open a new frame and insert the current processed tuple.
 context *open(tuple tuple, context *C, node **buffer) {
-    /** Add **/
     enqueue(buffer, tuple);
-    /*********/
     switch (C->frame_type) {
         case 0:
             C->count++;
@@ -385,9 +416,7 @@ context *open(tuple tuple, context *C, node **buffer) {
 
 // Update the current frame, extends it to include the current processed tuple.
 context *update(tuple tuple, context *C, node **buffer, node *list) {
-    /** Add **/
     enqueue(buffer, tuple);
-    /*********/
     switch (C->frame_type) {
         case 0:
             C->count++;
