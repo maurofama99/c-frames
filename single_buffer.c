@@ -295,25 +295,6 @@ int main(int argc, char *argv[]) {
      **/
     int BUFFER_TYPE = atoi(argv[5]);
 
-    /*
-     * threshold
-        in order
-            000 ok
-            100 ok
-            001 ok
-            101 ok
-        ooo (single buffer)
-            010 ok
-            110 ok
-            020 ok
-            120 ok
-        ooo (multi buffer)
-            011 to do
-            111 to do
-            021 to do
-            121 to do
-     */
-
     // TUPLES
     int num_tuples = 0;
     char line[MAX_CHARS];
@@ -435,7 +416,7 @@ int main(int argc, char *argv[]) {
                         last = 0;
                         if (data.timestamp >= curr_window.t_start){
                             report_window.t_start = curr_window.t_start;
-                            report_window.t_end = curr_tuple.timestamp;
+                            //report_window.t_end = curr_tuple.timestamp;
                             report_window.size = curr_window.size;
                         }
                     }
@@ -461,7 +442,7 @@ int main(int argc, char *argv[]) {
                             evict_head = curr_window.t_start;
                         }
                     }
-                    curr_window.t_end = curr_tuple.timestamp;
+                    //curr_window.t_end = curr_tuple.timestamp;
                     if (buffer_iter->next != NULL) {
                         tail_buffer = buffer_iter->next; // restore pointer to buffer tail
                         buffer_iter = buffer_iter->next;
@@ -619,6 +600,7 @@ int main(int argc, char *argv[]) {
                     head_buffer = new_buffer_head;
                     /** End Evict **/
 
+                    // free evicted buffer
                     node* current_node = buffer_iter;
                     while (current_node != head_buffer) {
                         node* next = current_node->next;
@@ -640,7 +622,6 @@ int main(int argc, char *argv[]) {
     fclose(file); // close input file stream
 
     // free up memory
-    print_buffer(head_buffer);
     free_buffer(head_buffer);
     free(C);
 
