@@ -3,4 +3,4 @@ project(CFrames C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(CFrames single_buffer.c)
+add_executable(CFrames c_frames.c)

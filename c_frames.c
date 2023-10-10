@@ -22,15 +22,10 @@
 #define AGGREGATE 1 // Specify aggregation function
 #define AGGREGATE_THRESHOLD 1000 // Local condition
 
-// EVICTION POLICY
-#define X 25000 // SINGLE BUFFER: after X frames created / MULTI BUFFER: after X ms passed
-#define Y 4 // evict first Y frames
-// Condition: SB Y < X, MB: in X ms no more than Y frames created
-
 #define MAX_CHARS 256 // Max admitted characters in a line representing event
-#define MAX_FRAMES 5 // Max admitted size of multi-buffer, pay attention to choose an evict policy that does not cause overflow
+#define MAX_FRAMES 35000 // Max admitted size of multi-buffer, pay attention to choose an evict policy that does not cause overflow
 
-#define DEBUG true
+#define DEBUG false
 
 // tuple definition
 typedef struct Data {
@@ -267,7 +262,7 @@ void free_buffer(node* head) {
 
 int main(int argc, char *argv[]) {
 
-    if (argc != 6) {
+    if (argc != 8) {
         perror("Usage: <input file path> <Frame type (THRESHOLD = 0 | DELTA = 1 | AGGREGATE = 2)> <Report policy (ON CLOSE = 0 | ON UPDATE = 1)> <Order policy (IN ORDER = 0 | OUT OF ORDER = 1)> <Buffer type (0 = SINGLE BUFFER | 1 = MULTI BUFFER)\n ");
         return 1;
     }
@@ -294,6 +289,15 @@ int main(int argc, char *argv[]) {
     * MULTI BUFFER = 1
      **/
     int BUFFER_TYPE = atoi(argv[5]);
+    /**
+     * EVICTION POLICY PARAMETERS
+     */
+    // SINGLE BUFFER: after X frames created / MULTI BUFFER: after X ms passed
+    // evict first Y frames
+    // Condition: SB Y < X, MB: in X ms no more than Y frames created
+    int X = atoi(argv[6]);
+    int Y = atoi(argv[7]);
+
 
     // TUPLES
     int num_tuples = 0;
@@ -334,13 +338,17 @@ int main(int argc, char *argv[]) {
     clock_t begin_add;
     clock_t begin_scope;
     clock_t begin_content;
+    clock_t begin_evict;
     clock_t end_add;
     clock_t end_scope;
     clock_t end_content;
+    clock_t end_evict;
     double time_spent_add;
     double time_spent_scope;
     double time_spent_content;
-    printf("action,time,n\n");
+    double time_spent_evict;
+    if (BUFFER_TYPE == 0) printf("add,scope,content,evict,n\n");
+    if (BUFFER_TYPE == 1) printf("scope,add,content,evict,n\n");
 
     // parse CSV
     FILE *file = fopen(file_path, "r");
@@ -385,12 +393,12 @@ int main(int argc, char *argv[]) {
             else if (ORDER_POLICY == 1) { // Out-of-Order (eager sort)
                 insertInOrder(&head_buffer, data);
             }
-            num_tuples++; // count the processed tuples
             end_add = clock();
             time_spent_add = (double) (end_add - begin_add) / CLOCKS_PER_SEC;
-            //printf("add,%f,%d\n", time_spent_add,num_tuples);
+            printf("%f,", time_spent_add);
             /** End Add **/
         }
+        num_tuples++; // count the processed tuples
 
         if (tick(data)) {
 
@@ -454,7 +462,7 @@ int main(int argc, char *argv[]) {
                 C->v = -1;
                 end_scope = clock();
                 time_spent_scope = (double)(end_scope - begin_scope) / CLOCKS_PER_SEC;
-                //printf("scope,%f,%d\n", time_spent_scope,num_tuples);
+                printf("%f,", time_spent_scope);
                 /** End Scope **/
             } else if (BUFFER_TYPE == 1){ // Multi Buffer
                 /** Start Scope **/
@@ -493,7 +501,7 @@ int main(int argc, char *argv[]) {
                 }
                 end_scope = clock();
                 time_spent_scope = (double)(end_scope - begin_scope) / CLOCKS_PER_SEC;
-                //printf("scope,%f,%d\n", time_spent_scope,num_tuples);
+                printf("%f,", time_spent_scope);
                 /** End Scope **/
 
                 /** Start Add **/
@@ -536,7 +544,7 @@ int main(int argc, char *argv[]) {
 
                 end_add = clock();
                 time_spent_add = (double) (end_add - begin_add) / CLOCKS_PER_SEC;
-                //printf("add,%f,%d\n", time_spent_add,num_tuples);
+                printf("%f,", time_spent_add);
                 /** End Add **/
 
             } else printf("Buffer type %d not recognized", BUFFER_TYPE);
@@ -552,7 +560,7 @@ int main(int argc, char *argv[]) {
                 if (BUFFER_TYPE == 1) content = frames[report_window.index].current;
                 end_content = clock();
                 time_spent_content = (double)(end_content - begin_content) / CLOCKS_PER_SEC;
-                //printf("content,%f,%d\n", time_spent_content,num_tuples);
+                printf("%f,", time_spent_content);
                 /** End Content **/
 
 
@@ -586,36 +594,46 @@ int main(int argc, char *argv[]) {
                 /** END DEBUG CODE **/
 
 
-            }
+            } else printf("-1,");
             if (BUFFER_TYPE == 0) free_buffer(buffer);
 
-            if (BUFFER_TYPE == 0) { // SINGLE BUFFER: find a tuple in the buffer that is the pointer to the head of the buffer after eviction
-                if (frames_count % X == 0) { // check eviction policy
-                    // Policy: after X frames are created, evict first Y frames
-                    /** Start Evict **/
-                    buffer_iter = head_buffer; // pointer to head always available O(1)
-                    new_buffer_head = extract_data(evict_head, buffer_iter); // binary search, pointer to head after eviction found in O(logn)
-                    frames_count = X - Y;
-                    buffer_iter = head_buffer;
-                    head_buffer = new_buffer_head;
-                    /** End Evict **/
+            if (X != -1) {
+                if (BUFFER_TYPE == 0) { // SINGLE BUFFER: find a tuple in the buffer that is the pointer to the head of the buffer after eviction
+                    if (frames_count % X == 0) { // check eviction policy
+                        // Policy: after X frames are created, evict first Y frames
+                        /** Start Evict **/
+                        begin_evict = clock();
+                        buffer_iter = head_buffer; // pointer to head always available O(1)
+                        new_buffer_head = extract_data(evict_head, buffer_iter); // binary search, pointer to head after eviction found in O(logn)
+                        frames_count = X - Y;
+                        buffer_iter = head_buffer;
+                        head_buffer = new_buffer_head;
+                        end_evict = clock();
+                        time_spent_evict = (double)(end_evict - begin_evict) / CLOCKS_PER_SEC;
+                        printf("%f,%d\n", time_spent_evict,num_tuples);
+                        /** End Evict **/
 
-                    // free evicted buffer
-                    node* current_node = buffer_iter;
-                    while (current_node != head_buffer) {
-                        node* next = current_node->next;
-                        free(current_node);
-                        current_node = next;
-                    }
+                        // free evicted buffer
+                        node *current_node = buffer_iter;
+                        while (current_node != head_buffer) {
+                            node *next = current_node->next;
+                            free(current_node);
+                            current_node = next;
+                        }
+                    } else printf("-1,%d\n", num_tuples);
                 }
-            }
-            if (BUFFER_TYPE == 1) {
-                if (data.timestamp % X == 0) { // check eviction policy
-                    /** Start Evict **/
-                    multi_buffer_head = (multi_buffer_head + Y) % MAX_FRAMES;
-                    /** End Evict **/
+                if (BUFFER_TYPE == 1) {
+                    if (data.timestamp % X == 0) { // check eviction policy
+                        begin_evict = clock();
+                        /** Start Evict **/
+                        multi_buffer_head = (multi_buffer_head + Y) % MAX_FRAMES;
+                        end_evict = clock();
+                        time_spent_evict = (double)(end_evict - begin_evict) / CLOCKS_PER_SEC;
+                        printf("%f,%d\n", time_spent_evict,num_tuples);
+                        /** End Evict **/
+                    } else printf("-1,%d\n", num_tuples);
                 }
-            }
+            } else printf("-1,%d\n", num_tuples);
         }
 
     }
