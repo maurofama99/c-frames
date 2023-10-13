@@ -23,9 +23,9 @@
 #define AGGREGATE_THRESHOLD 1000 // Local condition
 
 #define MAX_CHARS 256 // Max admitted characters in a line representing event
-#define MAX_FRAMES 35000 // Max admitted size of multi-buffer, pay attention to choose an evict policy that does not cause overflow
+#define MAX_FRAMES 5000 // Max admitted size of multi-buffer, pay attention to choose an evict policy that does not cause overflow
 
-#define DEBUG false
+#define DEBUG true
 
 // tuple definition
 typedef struct Data {
@@ -321,6 +321,7 @@ int main(int argc, char *argv[]) {
     tuple curr_tuple;
     window frames[MAX_FRAMES]; // multi buffer data structure
     long frames_count = 0;
+    long W = 0;
     long evict_head;
     node *new_buffer_head;
     long multi_buffer_head = 0;
@@ -468,37 +469,42 @@ int main(int argc, char *argv[]) {
                 /** Start Scope **/
                 begin_scope = clock();
 
-                if (multi_buffer_head < frames_count) {
-                    for (long i = multi_buffer_head; i < frames_count; i++) {
-                        if (data.timestamp >= frames[i].t_start && (data.timestamp <= frames[i].t_end || frames[i].t_end == -1)){
-                            curr_window.index = i;
-                            current = frames[i].current;
-                            tail = frames[i].tail;
-                        }
-                    }
-                } else {
-                    for (long i = multi_buffer_head; i < MAX_FRAMES; i++) {
-                        if (data.timestamp >= frames[i].t_start && (data.timestamp <= frames[i].t_end || frames[i].t_end == -1)){
-                            curr_window.index = i;
-                            current = frames[i].current;
-                            tail = frames[i].tail;
-                        }
-                    }
-                    for (long i = 0; i < frames_count; i++) {
-                        if (data.timestamp >= frames[i].t_start && (data.timestamp <= frames[i].t_end || frames[i].t_end == -1)){
-                            curr_window.index = i;
-                            current = frames[i].current;
-                            tail = frames[i].tail;
-                        }
-                    }
-                }
-
                 if (frames_count == 0 && first) {
                     current = NULL;
                     tail = NULL;
                     curr_window.index = -1;
                     first = false;
+                } else {
+                    if (multi_buffer_head < frames_count) {
+                        for (long i = multi_buffer_head; i < frames_count; i++) {
+                            if (data.timestamp >= frames[i].t_start &&
+                                (data.timestamp <= frames[i].t_end || frames[i].t_end == -1)) {
+                                curr_window.index = i;
+                                current = frames[i].current;
+                                tail = frames[i].tail;
+                            }
+                        }
+                    } else if (multi_buffer_head >= frames_count) {
+                        for (long i = multi_buffer_head; i < MAX_FRAMES; i++) {
+                            if (data.timestamp >= frames[i].t_start &&
+                                (data.timestamp <= frames[i].t_end || frames[i].t_end == -1)) {
+                                curr_window.index = i;
+                                current = frames[i].current;
+                                tail = frames[i].tail;
+                            }
+                        }
+                        for (long i = 0; i < frames_count; i++) {
+                            if (data.timestamp >= frames[i].t_start &&
+                                (data.timestamp <= frames[i].t_end || frames[i].t_end == -1)) {
+                                curr_window.index = i;
+                                current = frames[i].current;
+                                tail = frames[i].tail;
+                            }
+                        }
+                    }
                 }
+
+
                 end_scope = clock();
                 time_spent_scope = (double)(end_scope - begin_scope) / CLOCKS_PER_SEC;
                 printf("%f,", time_spent_scope);
@@ -540,6 +546,7 @@ int main(int argc, char *argv[]) {
                     frames[curr_window.index].t_start = curr_tuple.timestamp;
                     frames[curr_window.index].t_end = -1;
                     frames_count++;
+                    W++;
                 }
 
                 end_add = clock();
@@ -569,7 +576,7 @@ int main(int argc, char *argv[]) {
                 if (DEBUG) {
                     if (BUFFER_TYPE == 0) {
                         int print_count = 0;
-                        printf("frame [%ld, %ld] (size %ld) -> ", report_window.t_start, report_window.t_end, report_window.size);
+                        printf("frame %ld: [%ld, %ld] (size %ld) -> ", frames_count, report_window.t_start, report_window.t_end, report_window.size);
                         while (content != NULL && print_count < report_window.size) {
                             printf("(ts: %ld, value: %f) ", content->data.timestamp, content->data.A);
                             content = content->next;
@@ -629,18 +636,21 @@ int main(int argc, char *argv[]) {
                         multi_buffer_head = (multi_buffer_head + Y) % MAX_FRAMES;
                         end_evict = clock();
                         time_spent_evict = (double)(end_evict - begin_evict) / CLOCKS_PER_SEC;
-                        printf("%f,%d\n", time_spent_evict,num_tuples);
+                        printf("%f,%ld\n", time_spent_evict,W);
                         /** End Evict **/
-                    } else printf("-1,%d\n", num_tuples);
+                    } else printf("-1,%ld\n", W);
                 }
-            } else printf("-1,%d\n", num_tuples);
+            }
+            else if (BUFFER_TYPE == 1) printf("-1,%ld\n", W);
+            else if (BUFFER_TYPE == 0) printf("-1,%d\n", num_tuples);
         }
 
     }
     fclose(file); // close input file stream
 
     // free up memory
-    free_buffer(head_buffer);
+    if (BUFFER_TYPE == 0) free_buffer(head_buffer);
+    if (BUFFER_TYPE == 1) free_buffer(frames[0].current);
     free(C);
 
     return 0;
