@@ -4,7 +4,6 @@
 #include <math.h>
 #include <string.h>
 #include <time.h>
-#include <limits.h>
 
 /* PARAMETERS */
 // THRESHOLD
@@ -22,9 +21,10 @@
 #define AGGREGATE_THRESHOLD 1000 // Local condition
 
 #define MAX_CHARS 256 // Max admitted characters in a line representing event
-#define MAX_FRAMES 5000 // Max admitted size of multi-buffer, pay attention to choose an evict policy that does not cause overflow
+#define MAX_FRAMES 120000 // Max admitted size of multi-buffer, pay attention to choose an evict policy that does not cause overflow
+#define MAX_TUPLES 200000
 
-#define DEBUG true
+#define DEBUG false
 
 // tuple definition
 typedef struct Data {
@@ -58,6 +58,15 @@ typedef struct Window {
     long index;
 } window;
 
+int delay_execution(int ms){
+    const struct timespec ts = {
+            ms / 1000, /* seconds */
+            (ms % 1000) * 1000 * 1000 /* nano seconds */
+    };
+    return nanosleep(&ts, NULL);
+}
+
+
 /**
  * This function decides which aggregation function has to be applied to the current frame
  * @param agg_function aggregation to apply
@@ -85,14 +94,15 @@ context *open(tuple tuple, context *C, node **buffer);
 
 /** BUFFER FUNCTIONS **/
 void enqueue(node** last, tuple data);
-//void insertInOrder(node** head, tuple data);
-void free_buffer(node *head);
+void insertInOrder(window frames[], long W, window newWindow, int startIdx) ;
+void free_buffer(window frames[], int num_tuples);
+void free_temp_buffer(node* head);
 void print_buffer(node* head);
 /**********************/
 
 /** SECRET FUNCTIONS **/
 bool tick(tuple data);
-node *extract_data(long t_start, node *head);
+int extract_data(window frames[], int startIdx, int W, long targetTimestamp);
 /**********************/
 
 /**
@@ -107,41 +117,50 @@ bool tick(tuple data) {
     else return false;
 }
 
-/**
- * Binary search in the buffer of the tuple having timestamp @param t_start
- * @param t_start timestamp to be searched in the buffer
- * @param head pointer to head of the buffer
- * @return pointer to the tuple in the buffer with matching timestamp
- */
-node *extract_data(long t_start, node *head) {
+int compareTimestamp(const void* a, const void* b) {
+    const node* nodeA = ((window*)a)->current;
+    const node* nodeB = ((window*)b)->current;
+    return (nodeA->data.timestamp - nodeB->data.timestamp);
+}
 
-    node *left = head;
-    node *right = NULL;
+int customBinarySearch(window frames[], int startIdx, int endIdx, long targetTimestamp) {
+    while (startIdx <= endIdx) {
 
-    while (left != right) {
-        node *mid = left;
-        int count = 0;
+        int mid = startIdx + (endIdx - startIdx) / 2;
 
-        while (mid != right) {
-            mid = mid->next;
-            count++;
+        delay_execution(10);
+
+        if (frames[mid].current->data.timestamp == targetTimestamp) {
+            return mid; // Element found
         }
 
-        mid = left;
-        for (int i = 0; i < count / 2; i++) {
-            mid = mid->next;
-        }
-
-        if (mid->data.timestamp == t_start) { // found
-            return mid;
-        } else if (mid->data.timestamp < t_start) {
-            left = mid->next;
+        if (frames[mid].current->data.timestamp < targetTimestamp) {
+            startIdx = mid + 1;
         } else {
-            right = mid;
+            endIdx = mid - 1;
         }
     }
 
-    return NULL;
+    return -1; // Element not found
+}
+
+
+int extract_data(window frames[], int startIdx, int W, long targetTimestamp) {
+
+    window key;
+    key.current = (node*)malloc(sizeof(node));
+    key.current->data.timestamp = targetTimestamp;
+
+    window* result = (window*)bsearch(&key, &frames[startIdx], W - startIdx, sizeof(window), compareTimestamp);
+
+    free(key.current);
+
+    if (result != NULL) {
+        return result - frames;
+    }
+
+    return -1;
+
 }
 
 /**
@@ -164,93 +183,76 @@ void enqueue(node** last, tuple data) {
     *last = new_node;
 }
 
-/*void insertInOrder(node** head, tuple data) {
+void insertInOrder(window frames[], long W, window newWindow, int startIdx) {
+
+    if (W >= MAX_FRAMES) {
+        printf("Error: Array is full, cannot insert.\n");
+        return;
+    }
+
+    int insertIndex = 0;
+    while (insertIndex < W && frames[insertIndex].current->data.timestamp < newWindow.current->data.timestamp) {
+        insertIndex++;
+    }
+
+    // move the elements
+    for (long i = W; i > insertIndex; i--) {
+        frames[i] = frames[i - 1];
+    }
+
+    frames[insertIndex] = newWindow;
+}
+
+void heapify(window arr[], int n, int i) {
+    int largest = i;
+    int left = 2 * i + 1;
+    int right = 2 * i + 2;
+
+    if (left < n && compareTimestamp(&arr[left], &arr[largest]) > 0) {
+        largest = left;
+    }
+
+    if (right < n && compareTimestamp(&arr[right], &arr[largest]) > 0) {
+        largest = right;
+    }
+
+    if (largest != i) {
+        window temp = arr[i];
+        arr[i] = arr[largest];
+        arr[largest] = temp;
+
+        heapify(arr, n, largest);
+    }
+}
+
+void heapSort(window arr[], int n) {
+    for (int i = n / 2 - 1; i >= 0; i--) {
+        heapify(arr, n, i);
+    }
+
+    for (int i = n - 1; i > 0; i--) {
+        window temp = arr[0];
+        arr[0] = arr[i];
+        arr[i] = temp;
+
+        heapify(arr, i, 0);
+    }
+}
+
+node* newNode(tuple data){
     node* new_node = (node*)malloc(sizeof(node));
     new_node->data = data;
     new_node->next = NULL;
-
-    if (*head == NULL || data.timestamp <= (*head)->data.timestamp) {
-        new_node->next = *head;
-        *head = new_node;
-    } else {
-        node* current = *head;
-        while (current->next != NULL && current->next->data.timestamp <= data.timestamp) {
-            current = current->next;
-        }
-        new_node->next = current->next;
-        current->next = new_node;
-    }
-}*/
-
-// Function to merge two sorted linked lists
-node* merge(node* left, node* right) {
-    if (left == NULL) return right;
-    if (right == NULL) return left;
-
-    node* result = NULL;
-
-    if (left->data.timestamp <= right->data.timestamp) {
-        result = left;
-        result->next = merge(left->next, right);
-    } else {
-        result = right;
-        result->next = merge(left, right->next);
-    }
-
-    return result;
+    return new_node;
 }
 
-// Function to split a linked list into two halves
-void split(node* source, node** left, node** right) {
-    if (source == NULL || source->next == NULL) {
-        *left = source;
-        *right = NULL;
-        return;
+void free_buffer(window frames[], int num_tuples) {
+    for(int i = 0; i < num_tuples; i++){
+        free(frames[i].current);
     }
-
-    node* slow = source;
-    node* fast = source->next;
-
-    while (fast != NULL) {
-        fast = fast->next;
-        if (fast != NULL) {
-            slow = slow->next;
-            fast = fast->next;
-        }
-    }
-
-    *left = source;
-    *right = slow->next;
-    slow->next = NULL;
 }
 
-// Merge Sort function for linked list
-void mergeSort(node** head) {
-    node* current = *head;
-    node* left;
-    node* right;
-
-    if (current == NULL || current->next == NULL) {
-        return;
-    }
-
-    split(current, &left, &right);
-
-    mergeSort(&left);
-    mergeSort(&right);
-
-    *head = merge(left, right);
-}
-
-void print_buffer(node* head) {
-    while (head != NULL) {
-        printf("[VID: %ld, A: %f] ", head->data.timestamp, head->data.A);
-        head = head->next;
-    }
-    printf("\n");
-}
-
-void free_buffer(node* head) {
+void free_temp_buffer(node* head) {
     node* current = head;
     while (current != NULL) {
         node* next = current->next;
@@ -258,6 +260,7 @@ void free_buffer(node* head) {
         current = next;
     }
 }
+
 
 int main(int argc, char *argv[]) {
 
@@ -319,13 +322,16 @@ int main(int argc, char *argv[]) {
     C->v = -1;
     tuple curr_tuple;
     window frames[MAX_FRAMES]; // multi buffer data structure
-    long frames_count = 0;
+    tuple tuples[MAX_TUPLES];
+    long frames_count = 1;
     long W = 0;
     long evict_head;
     node *new_buffer_head;
     long multi_buffer_head = 0;
+    long single_buffer_head = 0;
     long frames_count_iterator = 0;
     long multi_buffer_head_iterator = 0;
+    int buffer_size = 0;
     bool first =true;
 
     // SECRET
@@ -387,18 +393,19 @@ int main(int argc, char *argv[]) {
             /** Start Add **/
             begin_add = clock();
             if (ORDER_POLICY == 0 || ORDER_POLICY == 2) { // In-Order & Out-of-Order (lazy sort)
-                enqueue(&tail_buffer, data);
-                if (num_tuples == 0) head_buffer = tail_buffer; // save pointer to first element of the list representing the buffer
+                frames[num_tuples].current = newNode(data);
             }
             else if (ORDER_POLICY == 1) { // Out-of-Order (eager sort)
-                //insertInOrder(&head_buffer, data);
+                window new_window;
+                new_window.current = newNode(data);
+                insertInOrder(frames, num_tuples, new_window, single_buffer_head);
             }
             end_add = clock();
-            time_spent_add = (double) (end_add - begin_add) / CLOCKS_PER_SEC;
+            time_spent_add = (double) (end_add - begin_add) *1000 / CLOCKS_PER_SEC;
             printf("%f,", time_spent_add);
             /** End Add **/
         }
-        num_tuples++; // count the processed tuples
+        num_tuples++; // index of the tail of the buffer
 
         if (tick(data)) {
 
@@ -406,17 +413,17 @@ int main(int argc, char *argv[]) {
                 /** Start Scope **/
                 begin_scope = clock();
                 if (ORDER_POLICY == 2){ // Out-of-Order (lazy sort)
-                    mergeSort(&head_buffer);
+                    heapSort(frames + single_buffer_head, num_tuples - single_buffer_head);
                 }
                 // Frame Operator
-                buffer_iter = head_buffer;
                 head = true;
                 curr_window.size = 0;
                 buffer = NULL;
                 tail = NULL;
                 long frames_count_tmp = 0;
-                while (buffer_iter != NULL) {
-                    curr_tuple = buffer_iter->data;
+                long iterator = single_buffer_head;
+                while (iterator < num_tuples) {
+                    curr_tuple = frames[iterator].current->data;
                     // process tuple
                     last = -1;
                     if (close_pred(curr_tuple, C)) {
@@ -451,17 +458,14 @@ int main(int argc, char *argv[]) {
                         }
                     }
                     //curr_window.t_end = curr_tuple.timestamp;
-                    if (buffer_iter->next != NULL) {
-                        tail_buffer = buffer_iter->next; // restore pointer to buffer tail
-                        buffer_iter = buffer_iter->next;
-                    } else buffer_iter = NULL;
+                    iterator++;
                 }
                 frames_count = frames_count_tmp;
                 C->count = 0;
                 C->start = false;
                 C->v = -1;
                 end_scope = clock();
-                time_spent_scope = (double)(end_scope - begin_scope) / CLOCKS_PER_SEC;
+                time_spent_scope = (double)(end_scope - begin_scope) *1000 / CLOCKS_PER_SEC;
                 printf("%f,", time_spent_scope);
                 /** End Scope **/
             } else if (BUFFER_TYPE == 1){ // Multi Buffer
@@ -505,7 +509,7 @@ int main(int argc, char *argv[]) {
 
 
                 end_scope = clock();
-                time_spent_scope = (double)(end_scope - begin_scope) / CLOCKS_PER_SEC;
+                time_spent_scope = (double)(end_scope - begin_scope) *1000 / CLOCKS_PER_SEC;
                 printf("%f,", time_spent_scope);
                 /** End Scope **/
 
@@ -549,7 +553,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 end_add = clock();
-                time_spent_add = (double) (end_add - begin_add) / CLOCKS_PER_SEC;
+                time_spent_add = (double) (end_add - begin_add) *1000 / CLOCKS_PER_SEC;
                 printf("%f,", time_spent_add);
                 /** End Add **/
 
@@ -561,11 +565,11 @@ int main(int argc, char *argv[]) {
 
                 /** Start Content **/
                 begin_content = clock();
-                buffer_iter = head_buffer; // initialize pointer that iterates over the buffer
-                if (BUFFER_TYPE == 0) content = extract_data(report_window.t_start, buffer_iter); // binary search
+                int content_index;
+                if (BUFFER_TYPE == 0) content_index = customBinarySearch(frames, single_buffer_head, num_tuples-1, report_window.t_start); // binary search
                 if (BUFFER_TYPE == 1) content = frames[report_window.index].current;
                 end_content = clock();
-                time_spent_content = (double)(end_content - begin_content) / CLOCKS_PER_SEC;
+                time_spent_content = (double)(end_content - begin_content) *1000 / CLOCKS_PER_SEC;
                 printf("%f,", time_spent_content);
                 /** End Content **/
 
@@ -574,12 +578,10 @@ int main(int argc, char *argv[]) {
                 // print content
                 if (DEBUG) {
                     if (BUFFER_TYPE == 0) {
-                        int print_count = 0;
-                        printf("frame %ld: [%ld, %ld] (size %ld) -> ", frames_count, report_window.t_start, report_window.t_end, report_window.size);
-                        while (content != NULL && print_count < report_window.size) {
-                            printf("(ts: %ld, value: %f) ", content->data.timestamp, content->data.A);
-                            content = content->next;
-                            print_count++;
+                        printf("\n %ld: [%ld, %ld] (size %ld) {content index = %d} -> ", frames_count, report_window.t_start, report_window.t_end, report_window.size, content_index);
+                        for (int i = content_index; i < report_window.size + content_index; i++){
+                            if (i == MAX_FRAMES) i = 0;
+                            printf("(ts: %ld, value: %f) ", frames[i].current->data.timestamp, frames[i].current->data.A);
                         }
                     }
                     if (BUFFER_TYPE == 1) {
@@ -601,7 +603,7 @@ int main(int argc, char *argv[]) {
 
 
             } else printf("-1,");
-            if (BUFFER_TYPE == 0) free_buffer(buffer);
+            if (BUFFER_TYPE == 0) free_temp_buffer(buffer);
 
             if (X != -1) {
                 if (BUFFER_TYPE == 0) { // SINGLE BUFFER: find a tuple in the buffer that is the pointer to the head of the buffer after eviction
@@ -609,23 +611,14 @@ int main(int argc, char *argv[]) {
                         // Policy: after X frames are created, evict first Y frames
                         /** Start Evict **/
                         begin_evict = clock();
-                        buffer_iter = head_buffer; // pointer to head always available O(1)
-                        new_buffer_head = extract_data(evict_head, buffer_iter); // binary search, pointer to head after eviction found in O(logn)
+                        single_buffer_head = customBinarySearch(frames, single_buffer_head, num_tuples, evict_head);
+                        // todo: implement binary search on circular array to get infinite available memory
                         frames_count = X - Y;
-                        buffer_iter = head_buffer;
-                        head_buffer = new_buffer_head;
                         end_evict = clock();
-                        time_spent_evict = (double)(end_evict - begin_evict) / CLOCKS_PER_SEC;
+                        time_spent_evict = (double)(end_evict - begin_evict) *1000 / CLOCKS_PER_SEC;
                         printf("%f,%d\n", time_spent_evict,num_tuples);
                         /** End Evict **/
 
-                        // free evicted buffer
-                        node *current_node = buffer_iter;
-                        while (current_node != head_buffer) {
-                            node *next = current_node->next;
-                            free(current_node);
-                            current_node = next;
-                        }
                     } else printf("-1,%d\n", num_tuples);
                 }
                 if (BUFFER_TYPE == 1) {
@@ -634,7 +627,7 @@ int main(int argc, char *argv[]) {
                         /** Start Evict **/
                         multi_buffer_head = (multi_buffer_head + Y) % MAX_FRAMES;
                         end_evict = clock();
-                        time_spent_evict = (double)(end_evict - begin_evict) / CLOCKS_PER_SEC;
+                        time_spent_evict = (double)(end_evict - begin_evict) *1000 / CLOCKS_PER_SEC;
                         printf("%f,%ld\n", time_spent_evict,W);
                         /** End Evict **/
                     } else printf("-1,%ld\n", W);
@@ -648,8 +641,8 @@ int main(int argc, char *argv[]) {
     fclose(file); // close input file stream
 
     // free up memory
-    if (BUFFER_TYPE == 0) free_buffer(head_buffer);
-    if (BUFFER_TYPE == 1) free_buffer(frames[0].current);
+    if (BUFFER_TYPE == 0) free_buffer(frames, num_tuples);
+    if (BUFFER_TYPE == 1) free_temp_buffer(frames[0].current);
     free(C);
 
     return 0;

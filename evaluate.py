@@ -1,103 +1,30 @@
 import os
+import configparser
 
-commands = [
-    # MULTI BUFFER, IN ORDER, NO EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 0,
-        "buffer_type": 1,
-        "X": -1,
-        "Y": 5000
-    },
-    # MULTI BUFFER, IN ORDER, EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 0,
-        "buffer_type": 1,
-        "X": 34000000,
-        "Y": 5000
-    },
-    # SINGLE BUFFER, IN ORDER, NO EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 0,
-        "buffer_type": 0,
-        "X": -1,
-        "Y": 5000
-    },
-    # SINGLE BUFFER, IN ORDER, EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 0,
-        "buffer_type": 0,
-        "X": 6000,
-        "Y": 5000
-    },
-    # SINGLE BUFFER, OOO EAGER, EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 1,
-        "buffer_type": 0,
-        "X": 6000,
-        "Y": 5000
-    },
-    # SINGLE BUFFER, OOO EAGER, NO EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 1,
-        "buffer_type": 0,
-        "X": -1,
-        "Y": 5000
-    },
-    # SINGLE BUFFER, OOO LAZY, EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 2,
-        "buffer_type": 0,
-        "X": 6000,
-        "Y": 5000
-    },
-    # SINGLE BUFFER, OOO LAZY, NO EVICT
-    {
-        "input_file": "'resources/dataset/sample-delta-1000;5.csv'",
-        "frame_type": 1,
-        "report_policy": 0,
-        "order_policy": 2,
-        "buffer_type": 0,
-        "X": -1,
-        "Y": 5000
-    },
-]
+# Load the configuration file
+config = configparser.ConfigParser()
+config.read('evaluation/config.ini')
 
-for idx, cmd_args in enumerate(commands):
+os.system(f"gcc c_frames_v2.c -o cframes")
+
+for section in config.sections():
+    cmd_args = dict(config.items(section))
+
     input_file = cmd_args["input_file"]
-    frame_type = cmd_args["frame_type"]
-    report_policy = cmd_args["report_policy"]
-    order_policy = cmd_args["order_policy"]
-    buffer_type = cmd_args["buffer_type"]
-    X = cmd_args["X"]
-    Y = cmd_args["Y"]
+    frame_type = int(cmd_args["frame_type"])
+    report_policy = int(cmd_args["report_policy"])
+    order_policy = int(cmd_args["order_policy"])
+    buffer_type = int(cmd_args["buffer_type"])
+    X = int(cmd_args["x"])
+    Y = int(cmd_args["y"])
 
-    output_file = f"evaluation/results/output_{order_policy}_{buffer_type}_{X}.csv"
+    output_file = f"evaluation/results/output_{order_policy}_{buffer_type}_{X}_{section}.csv"
 
     command = f"./cframes {input_file} {frame_type} {report_policy} {order_policy} {buffer_type} {X} {Y} > {output_file}"
 
-    print(f"Running test {idx}: {command}")
+    print(f"Running test {section}: {command}")
     os.system(command)
-    print(f"Test {idx} completed\n----------")
+    print(f"Test {section} completed\n----------")
 
 print("Evaluation completed")
+

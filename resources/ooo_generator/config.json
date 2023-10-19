@@ -1,8 +1,8 @@
 {
-  "csv_filename": "../sample-threshold-1000;50.csv",
+  "csv_filename": "/home/maurofama/Documents/PolyFlow/OVERT/frink_project/frink/scripts/sampledata/sample-delta-1000;5.csv",
   "min_delay": 1000.0,
   "max_delay": 5000.0,
-  "probability": 0.1,
-  "output_dir": "results/sample-threshold-1000-50-ooo.csv",
+  "probability": 0.2,
+  "output_dir": "../dataset/sample-delta-1000-5-100k-ooo.csv",
   "start_line": 6
 }
