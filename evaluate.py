@@ -5,7 +5,7 @@ import configparser
 config = configparser.ConfigParser()
 config.read('evaluation/config.ini')
 
-os.system(f"gcc c_frames_v2.c -o cframes")
+os.system(f"gcc single_buffer.c -o cframes")
 
 for section in config.sections():
     cmd_args = dict(config.items(section))
