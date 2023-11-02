@@ -85,7 +85,6 @@ int main(int argc, char *argv[]) {
             tuples_count++;
             last_timestamp = data.timestamp;
 
-            // todo update frames_tail
             // FRAMES BUFFER
             tuple curr_tuple = data;
             if (close_pred(curr_tuple, C)) {
@@ -180,7 +179,7 @@ int main(int argc, char *argv[]) {
 
             // RECOMPUTE FRAMES
 
-            C->count = 0;
+            C->count = 1;
             C->start = true;
             C->v = tuples_iter->data.A;
 
@@ -196,9 +195,8 @@ int main(int argc, char *argv[]) {
 
             buffer_currentframe = tuples_iter; // testa del frame al quale la tupla dovrebbe appartenere
 
-
             if (tuples_iter->next != NULL) {
-                if (tuples_iter->next->data.timestamp >= data.timestamp && !found) { // found the out of order tuple
+                if (tuples_iter->next->data.timestamp >= data.timestamp && !found) { // found the out of order tuple, in-order insert into original frame
                     node *tmp = tuples_iter->next;
                     tuples_iter->next = (node *) malloc(sizeof(node));
                     tuples_iter->next->data = data;
@@ -215,7 +213,6 @@ int main(int argc, char *argv[]) {
             }
 
             bool recompute;
-            long merged_frame_size;
             while (tuples_iter != NULL){
                 recompute = false;
                 tuple curr_tuple = tuples_iter->data;
@@ -223,20 +220,18 @@ int main(int argc, char *argv[]) {
                 if (close_pred(curr_tuple, C)) {
                     C = close(curr_tuple, C);
 
-                    if (FRAME==0) new_frames_tail->t_end = curr_tuple.timestamp;
+                    if (FRAME == 0) new_frames_tail->t_end = curr_tuple.timestamp;
                     if (new_frames_tail->t_end < old_frames_head_t_end) {
                         // split
                         old_frames_head->end = new_frames_tail->end;
-                        printf("pre split, sta m di size e` %ld\n", new_frames_tail->size);
                         old_frames_head->size = new_frames_tail->size;
 
                         frame* new_frame = (frame*) malloc(sizeof (frame));
                         if (FRAME!=0) new_frame->start = tuples_iter;
-                        else new_frame->start = tuples_iter->next; // skip the tuple that ends the frame
+                        else new_frame->start = tuples_iter->next;
                         new_frame->end = old_frames_head_end;
                         new_frame->next = old_frames_head->next;
-                        if (FRAME!=0) new_frame->t_start = curr_tuple.timestamp;
-                        else new_frame->t_start = new_frame->start->data.timestamp;  // skip the tuple that ends the frame
+                        new_frame->t_start = curr_tuple.timestamp;
                         new_frame->t_end = new_frame->end->data.timestamp;
                         new_frame->size = (old_frames_head_size - new_frames_tail->size);
 
@@ -246,26 +241,6 @@ int main(int argc, char *argv[]) {
                         C->count = old_frames_head->size;
                         C->start = true;
                         C->v = old_frames_head->start->data.A;
-
-                        if (DEBUG) {
-                            frame *frames_head_debug = frames_head;
-                            printf("AFTER SPLIT CONTEXT\n");
-                            while (frames_head_debug != NULL) {
-                                printf("[%ld, %ld] size %ld, end ts: %ld -> ", frames_head_debug->t_start, frames_head_debug->t_end,
-                                       frames_head_debug->size, frames_head_debug->end->data.timestamp);
-                                int counter = 0;
-                                node *frames_head_debug_iter = frames_head_debug->start;
-                                while (frames_head_debug_iter != NULL && counter < frames_head_debug->size) {
-                                    printf("(ts: %ld, value : %f) ", frames_head_debug_iter->data.timestamp,
-                                           frames_head_debug_iter->data.A);
-                                    frames_head_debug_iter = frames_head_debug_iter->next;
-                                    counter++;
-                                }
-                                printf("\n");
-                                frames_head_debug = frames_head_debug->next;
-                            }
-                            printf("\n");
-                        }
 
                         new_frames_tail = old_frames_head;
 
@@ -289,28 +264,6 @@ int main(int argc, char *argv[]) {
                             new_frames_tail = old_frames_head;
                             buffer_currentframe = tuples_iter;
 
-                            if (DEBUG) {
-                                frame *frames_head_debug = frames_head;
-                                printf("AFTER MERGE CONTEXT\n");
-                                while (frames_head_debug != NULL) {
-                                    printf("[%ld, %ld] size %ld, start: %ld, end: %ld -> ", frames_head_debug->t_start,
-                                           frames_head_debug->t_end,
-                                           frames_head_debug->size, frames_head_debug->start->data.timestamp,
-                                           frames_head_debug->end->data.timestamp);
-                                    int counter = 0;
-                                    node *frames_head_debug_iter = frames_head_debug->start;
-                                    while (frames_head_debug_iter != NULL && counter < frames_head_debug->size) {
-                                        printf("(ts: %ld, value : %f) ", frames_head_debug_iter->data.timestamp,
-                                               frames_head_debug_iter->data.A);
-                                        frames_head_debug_iter = frames_head_debug_iter->next;
-                                        counter++;
-                                    }
-                                    printf("\n");
-                                    frames_head_debug = frames_head_debug->next;
-                                }
-                                printf("\n");
-                            }
-
                             new_frames_tail->size=1;
                             new_frames_tail->end = tuples_iter;
                             new_frames_tail->t_end = tuples_iter->data.timestamp;
@@ -328,8 +281,7 @@ int main(int argc, char *argv[]) {
                             C->count = 1;
                             C->start = true;
                             C->v = tuples_iter->data.A;
-                            old_frames_head = old_frames_head->next;
-                            new_frames_tail = old_frames_head;
+                            new_frames_tail = frames_tail;
                         }
                         break;
                     }
@@ -364,28 +316,6 @@ int main(int argc, char *argv[]) {
 
             frames_tail = new_frames_tail;
 
-        }
-
-        if (DEBUG) {
-            frame *frames_head_debug = frames_head;
-            printf("CONTEXT AFTER INSERT\n");
-            while (frames_head_debug != NULL) {
-                printf("[%ld, %ld] size %ld, end ts: %ld -> ", frames_head_debug->t_start, frames_head_debug->t_end,
-                       frames_head_debug->size, frames_head_debug->end->data.timestamp);
-                int counter = 0;
-                node *frames_head_debug_iter = frames_head_debug->start;
-                while (counter < frames_head_debug->size) {
-                    if (frames_head_debug_iter == NULL) printf(" (null) ");
-                    else {
-                        printf("(ts: %ld, value : %f) ", frames_head_debug_iter->data.timestamp, frames_head_debug_iter->data.A);
-                        frames_head_debug_iter = frames_head_debug_iter->next;
-                    }
-                    counter++;
-                }
-                printf("\n");
-                frames_head_debug = frames_head_debug->next;
-            }
-            printf("\n");
         }
 
     }
