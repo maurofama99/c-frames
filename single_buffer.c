@@ -321,7 +321,7 @@ int main(int argc, char *argv[]) {
     C->start = false;
     C->v = -1;
     tuple curr_tuple;
-    window frames[MAX_FRAMES]; // multi buffer data structure
+    window frames[MAX_FRAMES];
     tuple tuples[MAX_TUPLES];
     long frames_count = 1;
     long W = 0;

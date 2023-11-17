@@ -5,7 +5,7 @@
 #include "string.h"
 #include "time.h"
 
-#define DEBUG false
+#define DEBUG true
 
 int main(int argc, char *argv[]) {
 
@@ -38,6 +38,9 @@ int main(int argc, char *argv[]) {
     node* tuples_iter;
     long tuples_count = 0;
 
+    frame* content = NULL;
+
+    /// Benchmark
     clock_t begin_add;
     clock_t begin_scope;
     clock_t begin_split;
@@ -50,7 +53,7 @@ int main(int argc, char *argv[]) {
     double time_spent_scope;
     double time_spent_split = -1;
     double time_spent_merge = -1;
-    printf("scope,split,merge,w,n\n");
+    printf("add,scope,split,merge,w,n,nw\n");
 
     FILE *file = fopen(file_path, "r");
     if (file == NULL) {
@@ -93,13 +96,31 @@ int main(int argc, char *argv[]) {
         if (data.timestamp >= last_timestamp){
             // if ooo but inside current opened frame, just order the tuples buffer, no recompute
             // TUPLES BUFFER
+            /** START ADD **/
+            begin_add = clock();
             enqueue(&tuples_tail, data);
             if (tuples_count == 0) tuples_head = tuples_tail;
             tuples_count++;
             last_timestamp = data.timestamp;
+            end_add = clock();
+            time_spent_add = (double) (end_add - begin_add) *1000 / CLOCKS_PER_SEC;
+            /** END ADD **/
+
+            tuple curr_tuple = data;
+            /** SCOPE START **/
+            begin_scope = clock();
+            frame* frames_tail_iter = frames_head;
+            while (frames_tail_iter != NULL) {
+                if (frames_tail_iter->t_start <= curr_tuple.timestamp && frames_tail_iter->t_end >= curr_tuple.timestamp){
+                    frames_tail = frames_tail_iter;
+                }
+                frames_tail_iter = frames_tail_iter->next;
+            }
+            end_scope = clock();
+            time_spent_scope = (double)(end_scope - begin_scope) *1000 / CLOCKS_PER_SEC;
+            /** SCOPE END **/
 
             // FRAMES BUFFER
-            tuple curr_tuple = data;
             if (close_pred(curr_tuple, C)) {
                 C = close(curr_tuple, C);
 
@@ -139,7 +160,6 @@ int main(int argc, char *argv[]) {
             C_backup.start = C->start;
             C_backup.count = C->count;
             C_backup.v = C->v;
-            time_spent_scope = -1;
             time_spent_split = -1;
             time_spent_merge = -1;
         }
@@ -162,12 +182,17 @@ int main(int argc, char *argv[]) {
                                 old_frames_head = frames_iter->next;
                                 tuples_iter = frames_iter->end->next;
 
+                                /** START ADD **/
+                                begin_add = clock();
                                 node *tmp = tuples_iter->next;
                                 tuples_iter->next = (node *) malloc(sizeof(node));
                                 tuples_iter->next->data = data;
                                 tuples_iter->next->next = tmp;
                                 tuples_count++;
                                 found = true;
+                                end_add = clock();
+                                time_spent_add = (double) (end_add - begin_add) *1000 / CLOCKS_PER_SEC;
+                                /** END ADD **/
 
                                 old_frames_head->start = tuples_iter->next;
                                 old_frames_head->t_start =  tuples_iter->next->data.timestamp;
@@ -188,6 +213,8 @@ int main(int argc, char *argv[]) {
             time_spent_scope = (double)(end_scope - begin_scope) *1000 / CLOCKS_PER_SEC;
             /** END SCOPE **/
 
+            content = old_frames_head;
+
             // RECOMPUTE FRAMES
 
             C->count = 1;
@@ -207,6 +234,8 @@ int main(int argc, char *argv[]) {
             buffer_currentframe = tuples_iter; // testa del frame al quale la tupla dovrebbe appartenere
 
             if (tuples_iter->next != NULL) {
+                /** START ADD **/
+                begin_add = clock();
                 if (tuples_iter->next->data.timestamp > data.timestamp && !found) { // found the out of order tuple, in-order insert into original frame
                     node *tmp = tuples_iter->next;
                     tuples_iter->next = (node *) malloc(sizeof(node));
@@ -220,6 +249,9 @@ int main(int argc, char *argv[]) {
                         old_frames_head_end = tuples_iter->next;
                     }
                 }
+                end_add = clock();
+                time_spent_add = (double) (end_add - begin_add) *1000 / CLOCKS_PER_SEC;
+                /** END ADD **/
                 tuples_iter = tuples_iter->next;
             }
 
@@ -227,6 +259,7 @@ int main(int argc, char *argv[]) {
             bool bench_split = true;
             while (tuples_iter != NULL){
                 if (bench_split) {
+                    /** START SPLIT **/
                     begin_split = clock();
                     bench_split = false;
                 }
@@ -263,8 +296,10 @@ int main(int argc, char *argv[]) {
                         end_split = clock();
                         bench_split = true;
                         time_spent_split += (double) (end_split - begin_split) *1000 / CLOCKS_PER_SEC;
+                        /** END SPLIT **/
 
                         if (FRAME != 0) {
+                            /** START MERGE **/
                             begin_merge = clock();
                             // merge
                             while (old_frames_head->end->next != NULL && old_frames_head->next != NULL &&
@@ -281,6 +316,7 @@ int main(int argc, char *argv[]) {
                             frames_count--;
                             end_merge = clock();
                             time_spent_merge += (double) (end_merge - begin_merge) *1000 / CLOCKS_PER_SEC;
+                            /** END MERGE **/
 
                             old_frames_head_t_end = old_frames_head->t_end;
                             old_frames_head_end = old_frames_head->end;
@@ -320,6 +356,8 @@ int main(int argc, char *argv[]) {
                         new_frames_tail->end = tuples_iter;
                     }
 
+                    /** START ADD **/
+                    begin_add = clock();
                     if (tuples_iter->next != NULL && tuples_iter->next->data.timestamp >= data.timestamp &&
                         !found) { // found the out of order tuple
                         node *tmp = tuples_iter->next;
@@ -334,6 +372,9 @@ int main(int argc, char *argv[]) {
                             old_frames_head_end = tuples_iter->next;
                         }
                     }
+                    end_add = clock();
+                    time_spent_add = (double) (end_add - begin_add) *1000 / CLOCKS_PER_SEC;
+                    /** END ADD **/
                 }
                 tuples_iter = tuples_iter->next;
             }
@@ -342,10 +383,20 @@ int main(int argc, char *argv[]) {
 
         }
 
+        /** START CONTENT/EVICT **/
+        if (content != NULL) { // check content/eviction policy (tick)
+            if (DEBUG) printf("CONTENT/EVICT: [%ld, %ld] size %ld \n", content->t_start, content->t_end, content->size); // do content/evict
+            content = NULL;
+        }
+        /** END CONTENT/EVICT **/
+
+        // add,scope,split,merge,w,n,wn //fixme
+        printf("%f,", time_spent_add);
         printf("%f,", time_spent_scope);
         printf("%f,", time_spent_split);
         printf("%f,", time_spent_merge);
-        printf("%ld,%ld\n",frames_count,tuples_count);
+        printf("%ld,%ld,",frames_count,tuples_count);
+        printf("%ld\n", frames_count*tuples_count);
         time_spent_split = 0;
         time_spent_merge = 0;
 

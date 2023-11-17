@@ -2,9 +2,11 @@ import csv
 import random
 import json
 
+
 def delay_timestamp(ts, min_d, max_d):
-    delay = random.randint(int(min_d), int(max_d))
+    delay = random.randint(max(0, int(min_d)), int(max_d))
     return ts - delay
+
 
 with open('config.json', 'r') as config_file:
     config = json.load(config_file)
@@ -33,6 +35,15 @@ with open(csv_filename, 'r') as csv_file, open(output_dir, 'w', newline='') as o
     for i, row in enumerate(reader, start=1):
         original_timestamp = int(row[0])
         original_value = row[2]
+
+        # Adjust min_delay and max_delay based on the number of rows read
+        if i <= 5000000:
+            if i % 20000 == 0: min_delay += i
+            if i % 10000 == 0: max_delay += i
+
+        # Avoid negative delays
+        min_delay = max(0, min_delay)
+        max_delay = max(0, max_delay)
 
         if i >= start_line and random.uniform(0, 1) < probability:
             delayed_timestamp = delay_timestamp(original_timestamp, min_delay, max_delay)
