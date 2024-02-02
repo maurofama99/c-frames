@@ -4,6 +4,4 @@ project(CFrames C)
 set(CMAKE_C_STANDARD 11)
 
 add_executable(CFrames
-        frames.c
-        frames.h
-        multi_buffer.c)
+        tw_sb.c)
