@@ -19,6 +19,8 @@
 #define AGGREGATE 1 // Specify aggregation function
 #define AGGREGATE_THRESHOLD 1000 // Local condition
 
+#define GAP 500
+
 /**
  * Insert a tuple in the tail of a linked list
  * @param last pointer to last element of the buffer
@@ -104,6 +106,10 @@ context *open(tuple tuple, context *C) {
             C->v = tuple.A; // aggregation function on a single value corresponds to that value
             C->start = true;
             return C;
+        case 3:
+            C->curr_timestamp = tuple.timestamp;
+            C->start = true;
+            return C;
     }
 }
 
@@ -118,6 +124,9 @@ context *update(tuple tuple, context *C, node *buffer, long size) {
             return C;
         case 2:
             C->v = aggregation(AGGREGATE, buffer, size);
+            return C;
+        case 3:
+            C->curr_timestamp = tuple.timestamp;
             return C;
     }
 }
@@ -135,6 +144,9 @@ context *close(tuple tuple, context *C) {
         case 2:
             C->start = false;
             return C;
+        case 3:
+            C->start = false;
+            return C;
     }
 }
 
@@ -143,6 +155,7 @@ bool open_pred(tuple tuple, context *C) {
         case 0: return (tuple.A >= THRESHOLD && C->count == 0);
         case 1: return (!(C->start));
         case 2: return (!(C->start));
+        case 3: return (tuple.timestamp - C->curr_timestamp <= GAP && !(C->start));
     }
 }
 
@@ -151,6 +164,7 @@ bool update_pred(tuple tuple, context *C) {
         case 0: return (tuple.A >= THRESHOLD && C->count > 0);
         case 1: return (fabs(C->v - tuple.A) < DELTA && C->start);
         case 2: return (C->v < AGGREGATE_THRESHOLD && C->start);
+        case 3: return (tuple.timestamp - C->curr_timestamp <= GAP && C->start);
     }
 }
 
@@ -159,5 +173,6 @@ bool close_pred(tuple tuple, context *C) {
         case 0: return (tuple.A < THRESHOLD && C->count > 0);
         case 1: return (fabs(C->v - tuple.A) >= DELTA && C->start);
         case 2: return (C->v >= AGGREGATE_THRESHOLD && C->start);
+        case 3: return (tuple.timestamp - C->curr_timestamp > GAP && C->start);
     }
 }

@@ -22,6 +22,7 @@ typedef struct Context {
     double v;
     int count;
     bool start;
+    int curr_timestamp;
 } context;
 
 typedef struct Frame {

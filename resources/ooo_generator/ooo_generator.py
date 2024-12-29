@@ -38,8 +38,9 @@ with open(csv_filename, 'r') as csv_file, open(output_dir, 'w', newline='') as o
 
         # Adjust min_delay and max_delay based on the number of rows read
         if i <= 5000000:
-            if i % 20000 == 0: min_delay += i
-            if i % 10000 == 0: max_delay += i
+            if i % 10000 == 0:
+                min_delay += i
+                max_delay += i
 
         # Avoid negative delays
         min_delay = max(0, min_delay)

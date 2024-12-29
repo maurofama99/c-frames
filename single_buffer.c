@@ -20,11 +20,13 @@
 #define AGGREGATE 1 // Specify aggregation function
 #define AGGREGATE_THRESHOLD 1000 // Local condition
 
+#define GAP 500
+
 #define MAX_CHARS 256 // Max admitted characters in a line representing event
 #define MAX_FRAMES 120000 // Max admitted size of multi-buffer, pay attention to choose an evict policy that does not cause overflow
 #define MAX_TUPLES 200000
 
-#define DEBUG false
+#define DEBUG true
 
 // tuple definition
 typedef struct Data {
@@ -45,6 +47,7 @@ typedef struct Context {
     double v;
     int count;
     bool start;
+    int curr_timestamp;
 } context;
 
 // window definition
@@ -54,7 +57,6 @@ typedef struct Window {
     long t_end;
     node* current;
     node* tail;
-    context* context;
     long index;
 } window;
 
@@ -82,14 +84,14 @@ double sum(node* buffer);
 /** FRAMES FUNCTIONS **/
 // PREDICATES
 // The predicate functions trigger the actions depending on the framing scheme.
-bool close_pred(tuple data, context *pContext);
-bool update_pred(tuple data, context *pContext);
-bool open_pred(tuple data, context *pContext);
+ bool close_pred(tuple data, context *pContext);
+ bool update_pred(tuple data, context *pContext);
+ bool open_pred(tuple data, context *pContext);
 // FUNCTIONS
 // Concrete implementation of the framing action
-context *close(tuple tuple, context *C, node* buffer);
-context *update(tuple tuple, context *C, node **buffer, node *list) ;
-context *open(tuple tuple, context *C, node **buffer);
+ context *close(tuple tuple, context *C, node* buffer);
+ context *update(tuple tuple, context *C, node **buffer, node *list) ;
+ context *open(tuple tuple, context *C, node **buffer);
 /**********************/
 
 /** BUFFER FUNCTIONS **/
@@ -273,7 +275,8 @@ int main(int argc, char *argv[]) {
     * THRESHOLD = 0 -> Detect time periods where a specified attribute is over under a specified threshold.
     * DELTA = 1 -> A new frame starts whenever the value of a particular attribute changes by more than an amount.
     * AGGREGATE = 2 -> End a frame when an aggregate of the values of a specified attribute within the frame exceeds a threshold.
-     **/
+    * SESSION = 3
+    **/
     int FRAME = atoi(argv[2]);
     /**
     * ON CLOSE = 0 -> Report every time a frame is closed
@@ -320,6 +323,7 @@ int main(int argc, char *argv[]) {
     C->count = 0;
     C->start = false;
     C->v = -1;
+    C->curr_timestamp = GAP;
     tuple curr_tuple;
     window frames[MAX_FRAMES];
     tuple tuples[MAX_TUPLES];
@@ -429,6 +433,7 @@ int main(int argc, char *argv[]) {
                     if (close_pred(curr_tuple, C)) {
                         C = close(curr_tuple, C, current);
                         last = 0;
+                        C->curr_timestamp = curr_tuple.timestamp;
                         if (data.timestamp >= curr_window.t_start){
                             report_window.t_start = curr_window.t_start;
                             //report_window.t_end = curr_tuple.timestamp;
@@ -460,6 +465,7 @@ int main(int argc, char *argv[]) {
                     //curr_window.t_end = curr_tuple.timestamp;
                     iterator++;
                 }
+                C->curr_timestamp = 1000;
                 frames_count = frames_count_tmp;
                 C->count = 0;
                 C->start = false;
@@ -468,7 +474,8 @@ int main(int argc, char *argv[]) {
                 time_spent_scope = (double)(end_scope - begin_scope) *1000 / CLOCKS_PER_SEC;
                 printf("%f,", time_spent_scope);
                 /** End Scope **/
-            } else if (BUFFER_TYPE == 1){ // Multi Buffer
+            } else
+                if (BUFFER_TYPE == 1) { // Multi Buffer
                 /** Start Scope **/
                 begin_scope = clock();
 
@@ -602,7 +609,7 @@ int main(int argc, char *argv[]) {
                 /** END DEBUG CODE **/
 
 
-            } else printf("-1,");
+            }  else printf("-1,");
             if (BUFFER_TYPE == 0) free_temp_buffer(buffer);
 
             if (X != -1) {
@@ -636,7 +643,6 @@ int main(int argc, char *argv[]) {
             else if (BUFFER_TYPE == 1) printf("-1,%ld\n", W);
             else if (BUFFER_TYPE == 0) printf("-1,%d\n", num_tuples);
         }
-
     }
     fclose(file); // close input file stream
 
@@ -663,6 +669,10 @@ context *open(tuple tuple, context *C, node **buffer) {
             C->v = tuple.A; // aggregation function on a single value corresponds to that value
             C->start = true;
             return C;
+        case 3:
+            C->curr_timestamp = tuple.timestamp;
+            C->start = true;
+            return C;
     }
 }
 
@@ -677,6 +687,9 @@ context *update(tuple tuple, context *C, node **buffer, node *list) {
             return C;
         case 2:
             C->v = aggregation(AGGREGATE, list);
+            return C;
+        case 3:
+            C->curr_timestamp = tuple.timestamp;
             return C;
     }
 }
@@ -694,14 +707,18 @@ context *close(tuple tuple, context *C, node* buffer) {
         case 2:
             C->start = false;
             return C;
+        case 3:
+            C->start = false;
+            return C;
     }
 }
 
 bool open_pred(tuple tuple, context *C) {
     switch (C->frame_type) {
-        case 0: return (tuple.A >= THRESHOLD && C->count == 0);
+        case 0: return (tuple.A >= THRESHOLD  && C->count == 0);
         case 1: return (!(C->start));
         case 2: return (!(C->start));
+        case 3: return (tuple.timestamp - C->curr_timestamp <= GAP && !(C->start));
     }
 }
 
@@ -710,6 +727,7 @@ bool update_pred(tuple tuple, context *C) {
         case 0: return (tuple.A >= THRESHOLD && C->count > 0);
         case 1: return (fabs(C->v - tuple.A) < DELTA && C->start);
         case 2: return (C->v < AGGREGATE_THRESHOLD && C->start);
+        case 3: return (tuple.timestamp - C->curr_timestamp <= GAP && C->start);
     }
 }
 
@@ -718,6 +736,7 @@ bool close_pred(tuple tuple, context *C) {
         case 0: return (tuple.A < THRESHOLD && C->count > 0);
         case 1: return (fabs(C->v - tuple.A) >= DELTA && C->start);
         case 2: return (C->v >= AGGREGATE_THRESHOLD && C->start);
+        case 3: return (tuple.timestamp - C->curr_timestamp > GAP && C->start);
     }
 }
 

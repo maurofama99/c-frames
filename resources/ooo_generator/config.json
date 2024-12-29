@@ -1,8 +1,8 @@
 {
-  "csv_filename": "/home/maurofama/Documents/PolyFlow/OVERT/c-frames/resources/dataset/sample-delta-1000-50.csv",
+  "csv_filename": "/home/maurofama/Documents/PolyFlow/tesi/c-frames/resources/dataset/50k/delta_io_50k.csv",
   "min_delay": 10000.0,
   "max_delay": 60000.0,
   "probability": 0.3,
-  "output_dir": "/home/maurofama/Documents/PolyFlow/OVERT/c-frames/resources/dataset/sample-delta-1000-50-ooo.csv",
+  "output_dir": "/home/maurofama/Documents/PolyFlow/tesi/c-frames/resources/dataset/50k/delta_ooo_50k.csv",
   "start_line": 101
 }

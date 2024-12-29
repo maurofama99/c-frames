@@ -73,6 +73,7 @@ int main(int argc, char *argv[]) {
     C->count = 0;
     C->start = false;
     C->v = -1;
+    C->curr_timestamp = 500;
 
     while (fgets(line, 256, file) != NULL) {
         char *token = strtok(line, ",");
@@ -126,6 +127,7 @@ int main(int argc, char *argv[]) {
 
                 // multi-buffer management
                 frames_tail->t_end = curr_tuple.timestamp;
+                C->curr_timestamp = curr_tuple.timestamp;
             }
             if (update_pred(curr_tuple, C)) {
                 C = update(curr_tuple, C, buffer_currentframe, frames_tail->size);

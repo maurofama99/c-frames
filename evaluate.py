@@ -18,13 +18,26 @@ for section in config.sections():
     X = int(cmd_args["x"])
     Y = int(cmd_args["y"])
 
-    output_file = f"evaluation/results/output_{order_policy}_{buffer_type}_{X}_{section}.csv"
+    if buffer_type == 0:
+        output_buffer = "single"
+        if order_policy == 0:
+            output_order = "io"
+        elif order_policy == 1:
+            output_order = "eager"
+        elif order_policy == 2:
+            output_order = "lazy"
+        else:
+            exit(255)
+    else:
+        exit(255)
+
+    output_file = f"evaluation/results/{output_buffer}_{output_order}_{frame_type}.csv"
 
     command = f"./cframes {input_file} {frame_type} {report_policy} {order_policy} {buffer_type} {X} {Y} > {output_file}"
 
-    print(f"Running test {section}: {command}")
+    print(f"Running test {output_buffer}_{output_order}: {command}")
     os.system(command)
-    print(f"Test {section} completed\n----------")
+    print(f"Test {output_buffer}_{output_order} completed\n----------")
 
 print("Evaluation completed")
 
